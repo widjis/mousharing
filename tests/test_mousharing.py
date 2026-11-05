@@ -128,7 +128,7 @@ class TLSSessionTests(unittest.TestCase):
             app.send(conn,{'type':'ping'})
             self.assertEqual(next(events),{'type':'pong'})
             app.send(conn,{'type':'button','name':'left','down':False})
-            app.send(conn,{'type':'move','dx':1,'dy':0,'edge_switch':True})
+            app.send(conn,{'type':'move','dx':40,'dy':0,'edge_switch':True})
             self.assertEqual(next(events)['type'],'leave')
         finally:
             conn.shutdown(socket.SHUT_RDWR)

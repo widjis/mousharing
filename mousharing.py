@@ -12,7 +12,9 @@ import sys
 import threading
 import time
 
-from screens import Screen, SIDES, OPPOSITE, fraction, windows_primary_screen
+from screens import Screen, SIDES, OPPOSITE, fraction, windows_primary_screen, ReturnGate
+
+from input_transport import take_input
 
 PORT = 47831
 PROTOCOL_VERSION = 2
@@ -68,6 +70,7 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
     """One authenticated session; always release pressed inputs on exit."""
     held_keys, held_buttons = set(), set()
     active = False
+    return_gate = ReturnGate()
     side, switch_id = 'right', 0
     def release_inputs():
         for key in list(held_keys):
@@ -77,6 +80,7 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
             pointer.release(button)
             held_buttons.discard(button)
     try:
+        raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
         raw.settimeout(5)
         with context.wrap_socket(raw, server_side=True) as conn:
             events = messages(conn)
@@ -92,9 +96,11 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
                     send(conn, {'type':'pong'})
                     continue
                 if kind == 'reset':
+                    return_gate.reset()
                     release_inputs()
                     active = False
                 elif kind == 'enter':
+                    return_gate.reset()
                     release_inputs()
                     side = event['side']
                     if side not in SIDES:
@@ -111,7 +117,7 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
                     x,y=pointer.position
                     x,y=screen.clamp(x+dx,y+dy)
                     pointer.position=(round(x),round(y))
-                    if event.get('edge_switch') and not held_keys and not held_buttons and screen.crossed(OPPOSITE[side],x,y,dx,dy):
+                    if event.get('edge_switch') and return_gate.should_leave(screen,OPPOSITE[side],x,y,dx,dy,blocked=bool(held_keys or held_buttons)):
                         active=False
                         release_inputs()
                         send(conn, {'type':'leave','switch_id':switch_id,
@@ -159,7 +165,9 @@ def transmit(args):
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     # Trust is bound to the supplied certificate, not the LAN address.
     context.check_hostname = False
-    conn = context.wrap_socket(socket.create_connection((args.host,args.port),timeout=5), server_hostname=args.host)
+    raw = socket.create_connection((args.host,args.port),timeout=5)
+    raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
+    conn = context.wrap_socket(raw, server_hostname=args.host)
     send(conn, {'token':token, 'version':PROTOCOL_VERSION})
     incoming = messages(conn)
     ready=next(incoming)
@@ -171,7 +179,7 @@ def transmit(args):
     events = queue.Queue(maxsize=2048)
     controls = queue.Queue(maxsize=64)
     state = {'remote':False, 'alive':True, 'switch_id':0, 'ratio':0.5,
-             'hidden':False, 'armed_at':0.0}
+             'hidden':False, 'detached':False, 'armed_at':0.0}
     physical_keys, physical_buttons = set(),set()
     def enqueue(event):
         try:
@@ -188,6 +196,9 @@ def transmit(args):
     def go_local(ratio=None):
         was_remote=state['remote']
         state['remote']=False
+        if state['detached']:
+            Q.CGAssociateMouseAndMouseCursorPosition(True)
+            state['detached']=False
         if state['hidden']:
             Q.CGDisplayShowCursor(display)
             state['hidden']=False
@@ -200,11 +211,22 @@ def transmit(args):
     def go_remote(ratio):
         if not state['alive'] or physical_keys or physical_buttons:
             return False
+        # Do not send input to Windows unless local cursor capture succeeded.
+        hidden = Q.CGDisplayHideCursor(display)
+        if hidden != 0:
+            print('Cannot hide Mac cursor (code {}). Staying on Mac.'.format(hidden),flush=True)
+            return False
+        state['hidden']=True
+        detached = Q.CGAssociateMouseAndMouseCursorPosition(False)
+        if detached != 0:
+            Q.CGDisplayShowCursor(display)
+            state['hidden']=False
+            print('Cannot capture Mac cursor (code {}). Staying on Mac.'.format(detached),flush=True)
+            return False
+        state['detached']=True
         state.update(remote=True,ratio=fraction(ratio),switch_id=state['switch_id']+1)
         enqueue({'type':'enter','side':args.windows_side,'ratio':state['ratio'],
                  'switch_id':state['switch_id']})
-        if not state['hidden']:
-            state['hidden']=Q.CGDisplayHideCursor(display)==0
         print('Control: Windows',flush=True)
         return True
     def monitor():
@@ -222,12 +244,13 @@ def transmit(args):
     def worker():
         try:
             last_ping = time.monotonic()
+            pending = None
             while state['alive']:
                 if time.monotonic() - last_ping >= 1:
                     send(conn, {'type':'ping'})
                     last_ping = time.monotonic()
                 try:
-                    event = events.get(timeout=0.1)
+                    event,pending = take_input(events,pending)
                 except queue.Empty:
                     continue
                 send(conn,event)
@@ -241,8 +264,15 @@ def transmit(args):
     modifiers = {54:Q.kCGEventFlagMaskCommand,55:Q.kCGEventFlagMaskCommand,56:Q.kCGEventFlagMaskShift,60:Q.kCGEventFlagMaskShift,58:Q.kCGEventFlagMaskAlternate,61:Q.kCGEventFlagMaskAlternate,59:Q.kCGEventFlagMaskControl,62:Q.kCGEventFlagMaskControl,57:Q.kCGEventFlagMaskAlphaShift}
     modifier_mask=(Q.kCGEventFlagMaskCommand | Q.kCGEventFlagMaskShift |
                    Q.kCGEventFlagMaskAlternate | Q.kCGEventFlagMaskControl)
+    def suppress(event):
+        # Null the event as well as returning NULL from the tap callback.
+        Q.CGEventSetType(event,Q.kCGEventNull)
+        return None
     def callback(proxy,kind,event,ref):
         if kind in (Q.kCGEventTapDisabledByTimeout,Q.kCGEventTapDisabledByUserInput):
+            if state['remote']:
+                print('Input tap disabled; stopping remote session.',flush=True)
+                disconnect()
             go_local()
             enqueue({'type':'reset'})
             Q.CGEventTapEnable(tap,True)
@@ -255,7 +285,7 @@ def transmit(args):
                 else:
                     location=Q.CGEventGetLocation(event)
                     go_remote(screen.ratio(args.windows_side,location.x,location.y))
-            return None
+            return suppress(event)
         if kind == 10:
             physical_keys.add(code)
         elif kind == 11:
@@ -276,10 +306,10 @@ def transmit(args):
                         not Q.CGEventGetFlags(event) & modifier_mask and
                         screen.crossed(args.windows_side,location.x,location.y,dx,dy)):
                     if go_remote(screen.ratio(args.windows_side,location.x,location.y)):
-                        return None
+                        return suppress(event)
                 return event
             enqueue({'type':'move','dx':dx,'dy':dy,'edge_switch':not args.no_edge_switch})
-            return None
+            return suppress(event)
         if not state['remote']:
             return event
         if kind in (10,11,12):
@@ -295,7 +325,7 @@ def transmit(args):
             enqueue({'type':'button','name':name,'down':kind in (1,3,25)})
         elif kind == 22:
             enqueue({'type':'scroll','dx':Q.CGEventGetIntegerValueField(event,Q.kCGScrollWheelEventDeltaAxis2),'dy':Q.CGEventGetIntegerValueField(event,Q.kCGScrollWheelEventDeltaAxis1)})
-        return None
+        return suppress(event)
     mask = sum(1 << n for n in (1,2,3,4,5,6,7,10,11,12,22,25,26,27))
     tap = Q.CGEventTapCreate(Q.kCGSessionEventTap,Q.kCGHeadInsertEventTap,Q.kCGEventTapOptionDefault,mask,callback,None)
     if tap is None:
@@ -307,6 +337,10 @@ def transmit(args):
     print('Connected. Move across the shared edge, or use F8. Escape returns to Mac.',flush=True)
     try:
         while state['alive']:
+            if state['remote'] and not Q.CGEventTapIsEnabled(tap):
+                print('Input capture lost; stopping remote session.',flush=True)
+                disconnect()
+                break
             while True:
                 try:
                     reply=controls.get_nowait()

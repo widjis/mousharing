@@ -78,3 +78,20 @@ def windows_primary_screen():
     except AttributeError:
         user32.SetProcessDPIAware()
     return Screen(0,0,user32.GetSystemMetrics(0),user32.GetSystemMetrics(1))
+
+
+class ReturnGate:
+    """Require deliberate outward motion, so small edge jitter cannot switch back."""
+    def __init__(self, threshold=24):
+        self.threshold=threshold
+        self.pressure=0
+
+    def reset(self):
+        self.pressure=0
+
+    def should_leave(self,screen,edge,x,y,dx,dy,blocked=False):
+        if blocked or not screen.crossed(edge,x,y,dx,dy):
+            self.reset()
+            return False
+        self.pressure += abs(dx if edge in ('left','right') else dy)
+        return self.pressure >= self.threshold

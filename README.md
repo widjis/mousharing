@@ -2,7 +2,7 @@
 
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
-**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 13 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
+**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 18 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
 
 - **Tepi layar:** otomatis berpindah antara Mac dan Windows; keyboard mengikuti perangkat yang sedang dikontrol.
 - **F8 / Fn+F8:** alternatif untuk berpindah kontrol secara manual.
@@ -11,6 +11,8 @@ Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN
 - TLS dengan sertifikat Windows yang disalin secara eksplisit ke Mac dan password pairing minimal 16 karakter.
 - Heartbeat dua arah; tombol yang ditahan dilepas saat reset, disconnect, atau timeout receiver 5 detik. Mac kembali ke mode lokal ketika koneksi gagal atau respons heartbeat habis waktu.
 - Tidak merekam input atau menyimpan password pairing.
+- Clipboard belum disinkronkan; copy/paste tetap lokal pada tiap laptop.
+- Saat remote, gerakan fisik mouse dilepas dari kursor Mac dan event lokal ditekan. Jika hide/capture kursor gagal, kontrol tetap pada Mac. Jika event tap mati saat remote, sesi dihentikan dan kontrol dikembalikan ke Mac.
 
 ## Susunan dua layar
 
@@ -27,13 +29,15 @@ Ukuran layar utama dibaca otomatis pada saat mulai. Posisi fisik Windows dipilih
 ./start-mac.command IP_WINDOWS bottom # Windows di bawah Mac
 ```
 
-Perpindahan otomatis ditunda selama tombol atau klik masih ditahan, sehingga drag tetap berada pada perangkat asal. Setelah kembali ke Mac ada jeda singkat dan posisi masuk diberi jarak dari tepi untuk mencegah perpindahan bolak-balik tanpa sengaja. Escape tetap menjadi jalan kembali ke Mac.
+Perpindahan balik membutuhkan gerakan keluar yang cukup di tepi bersama agar jitter kecil tidak memantulkan kontrol. Perpindahan otomatis ditunda selama tombol atau klik masih ditahan, sehingga drag tetap berada pada perangkat asal. Setelah kembali ke Mac ada jeda singkat dan posisi masuk diberi jarak dari tepi untuk mencegah perpindahan bolak-balik tanpa sengaja. Escape tetap menjadi jalan kembali ke Mac.
 
 Saat ini satu layar utama per laptop. Setelah mengubah resolusi, scaling, atau layar utama, mulai ulang kedua program. Untuk mematikan perpindahan otomatis:
 
 ```sh
 .venv/bin/python mousharing.py send --host IP_WINDOWS --cert data/windows-cert.pem --no-edge-switch
 ```
+
+**Update perbaikan capture/jitter:** hentikan sender dan receiver, jalankan `git pull --ff-only` di kedua laptop, lalu mulai receiver Windows dan sender Mac kembali. Sertifikat dan dependency tetap digunakan. Capture lokal dan kelancaran mouse perlu diuji langsung; tes otomatis memakai input tiruan.
 
 **Pembaruan dari prototipe pertama:** hentikan program lalu jalankan `git pull --ff-only` di Mac dan Windows (atau unduh ulang ZIP). Kedua perangkat perlu source terbaru karena protokol sudah versi 2. Dependency tidak berubah; sertifikat yang sudah ada tetap digunakan.
 
@@ -110,7 +114,7 @@ Mulai dalam mode lokal. Lewati tepi yang menghadap Windows untuk berpindah otoma
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengetik atau menggerakkan mouse pengguna. Sertifikat tes dibuat sementara dengan generator yang sama dengan setup Windows. Tes mencakup framing pesan, pemetaan tombol shortcut, password salah, sertifikat tidak dipercaya, heartbeat, reset, pelepasan tombol saat disconnect, empat susunan layar, dan resolusi berbeda. Simulasi event loop sender melalui TLS menguji perpindahan Mac → Windows → Mac serta hide/show dan pemulihan posisi kursor tanpa memakai input fisik. Skrip PowerShell telah diperiksa sintaksnya dari Mac; eksekusi Windows belum dilakukan.
+Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengetik atau menggerakkan mouse pengguna. Sertifikat tes dibuat sementara dengan generator yang sama dengan setup Windows. Tes mencakup framing pesan, pemetaan tombol shortcut, password salah, sertifikat tidak dipercaya, heartbeat, reset, pelepasan tombol saat disconnect, empat susunan layar, dan resolusi berbeda. Simulasi event loop sender melalui TLS menguji perpindahan Mac → Windows → Mac serta hide/show dan pemulihan posisi kursor tanpa memakai input fisik. Tes tambahan memeriksa nullifikasi klik remote di Mac, kegagalan hide/capture, penghentian ketika tap mati, urutan klik/tombol selama batching gerakan, dan jitter tepi. Gerakan berurutan digabung dalam jendela sekitar 4 ms dan koneksi memakai TCP_NODELAY untuk mengurangi antrean; performa fisik belum diukur. Skrip PowerShell telah diperiksa sintaksnya dari Mac; eksekusi Windows belum dilakukan.
 
 ## Uji dua laptop yang masih diperlukan
 
