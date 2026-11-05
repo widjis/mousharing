@@ -53,13 +53,17 @@ def python_client(command):
         process=subprocess.Popen(command+['server',str(FIXTURE_PATH),str(port_file)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
             deadline=time.monotonic()+15
-            while not port_file.exists():
-                if process.poll() is not None:
-                    complete(process)
-                    raise ProtocolError('C# server did not create listener')
-                ensure(time.monotonic()<deadline,'C# listener startup timeout')
-                time.sleep(0.02)
-            port=int(port_file.read_text())
+            while True:
+                try:
+                    port=int(port_file.read_text())
+                    ensure(1<=port<=65535,'C# listener published invalid port')
+                    break
+                except (FileNotFoundError,ValueError,OSError):
+                    if process.poll() is not None:
+                        complete(process)
+                        raise ProtocolError('C# server did not create listener')
+                    ensure(time.monotonic()<deadline,'C# listener startup timeout')
+                    time.sleep(0.02)
             with socket.create_connection(('127.0.0.1',port),timeout=10) as conn,conn.makefile('rb') as stream:
                 plain=read(stream)
                 ensure(plain.get('type')=='challenge' and plain.get('v')==1 and plain.get('id')==MASTER,'Untrusted C# master')

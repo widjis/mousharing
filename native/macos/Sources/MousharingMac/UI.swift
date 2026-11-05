@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct MousharingMacApp: App {
+    @NSApplicationDelegateAdaptor(MousharingAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
     var body: some Scene {
         WindowGroup("Mousharing", id: "main") { MainView(model: model).frame(minWidth: 780, minHeight: 590) }
@@ -124,3 +125,5 @@ struct MainView: View {
         }
     }
 }
+
+@MainActor final class MousharingAppDelegate:NSObject,NSApplicationDelegate { func applicationWillTerminate(_ notification:Notification) { AppModel.active?.stop() } }

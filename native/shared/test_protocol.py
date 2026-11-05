@@ -8,7 +8,7 @@ from pathlib import Path
 from protocol_reference import (
     MAX_FRAME_BYTES,PREFIX,ProtocolError,RecordCipher,base64_decode,base64_encode,
     compact,derive_keys,frame,parse_frame,parse_invitation,seal,unseal,
-    validate_hello,validate_payload,validate_welcome,
+    validate_hello,validate_payload,validate_welcome,negotiate_clipboard,
 )
 
 FIXTURE=json.loads(Path(__file__).with_name('fixtures.json').read_text())
@@ -119,6 +119,13 @@ class NativeProtocolTests(unittest.TestCase):
                  ({'type':'move','dx':float('inf'),'dy':0,'edgeSwitch':True},'s2c')]
         for payload,direction in invalid:
             with self.assertRaises(ProtocolError): validate_payload(payload,direction)
+
+    def test_clipboard_requires_both_explicit_capabilities(self):
+        self.assertFalse(negotiate_clipboard(True,{}))
+        self.assertFalse(negotiate_clipboard(False,{'clipboard':True}))
+        self.assertFalse(negotiate_clipboard(True,{'clipboard':False}))
+        self.assertFalse(negotiate_clipboard(True,{'clipboard':1}))
+        self.assertTrue(negotiate_clipboard(True,{'clipboard':True}))
 
     def test_complete_socket_handshake_and_bidirectional_session(self):
         master,client=socket.socketpair()

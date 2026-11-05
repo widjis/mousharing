@@ -21,7 +21,30 @@ enum ProtocolSelfTest {
         }
         guard let invite=fixtures["invite"] as? String else { throw NativeError.message("Invite fixture missing") }; _ = try PairingInvite.parse(invite)
         guard integer(NSNumber(value:true)) == nil,integer(NSNumber(value:1.5)) == nil else { throw NativeError.message("Numeric validation failed") }
+        try settingsLoadRegression()
     }
+    private static func settingsLoadRegression() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent("mousharing-settings-test-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+        let file=folder.appendingPathComponent("settings.json")
+        defer { try? FileManager.default.removeItem(at:folder);_ = AppSettings.load(from:file) }
+        let initial=AppSettings.load(from:file)
+        guard canonicalUUID(initial.deviceID),AppSettings.staticLoadFailure == nil else { throw NativeError.message("Missing settings must initialize normally") }
+        let invalid=Data("{corrupt-settings".utf8)
+        try invalid.write(to:file)
+        let blocked=AppSettings.load(from:file)
+        guard AppSettings.staticLoadFailure != nil,blocked.deviceID.isEmpty else { throw NativeError.message("Corrupt settings did not fail closed") }
+        var refusedSave=false
+        do { try blocked.save(to:file) } catch { refusedSave=true }
+        guard refusedSave,try Data(contentsOf:file)==invalid else { throw NativeError.message("Corrupt settings were overwritten") }
+        _ = AppSettings.load(from:folder)
+        guard AppSettings.staticLoadFailure != nil else { throw NativeError.message("Unreadable settings did not fail closed") }
+        var known=AppSettings();known.deviceID="11111111-1111-4111-8111-111111111111";known.trustedPeerID="22222222-2222-4222-8222-222222222222";known.clientKeyAccount="client-public-test-account"
+        try JSONEncoder().encode(known).write(to:file)
+        let restored=AppSettings.load(from:file)
+        guard AppSettings.staticLoadFailure == nil,restored.deviceID==known.deviceID,restored.trustedPeerID==known.trustedPeerID,restored.clientKeyAccount==known.clientKeyAccount else { throw NativeError.message("Restored settings lost identity or trust") }
+    }
+
 }
 @main enum NativeEntryPoint {
     private static var testSession:NativeSession?
@@ -41,7 +64,7 @@ enum ProtocolSelfTest {
         dispatchMain()
     }
     static func main() {
-        if CommandLine.arguments.count>2 && CommandLine.arguments[1] == "--self-test" { do { try ProtocolSelfTest.run(path:CommandLine.arguments[2]);print("PASS native CryptoKit fixtures (HKDF, AES-GCM, invite, strict sequences)");exit(0) } catch { fputs("Protocol self-test failed: \(error.localizedDescription)\n",stderr);exit(1) } }
+        if CommandLine.arguments.count>2 && CommandLine.arguments[1] == "--self-test" { do { try ProtocolSelfTest.run(path:CommandLine.arguments[2]);print("PASS native CryptoKit fixtures + settings fail-closed regressions");exit(0) } catch { fputs("Protocol self-test failed: \(error.localizedDescription)\n",stderr);exit(1) } }
         if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--protocol-test-client" {
             guard let port=UInt16(CommandLine.arguments[3]),port>0 else { fputs("Invalid protocol test port\n",stderr);exit(1) }
             do { try protocolClient(host:CommandLine.arguments[2],port:port,inviteCode:CommandLine.arguments[4]) } catch { fputs("Protocol test failed: \(error.localizedDescription)\n",stderr);exit(1) }

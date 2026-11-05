@@ -25,7 +25,7 @@ struct PairingInvite: Codable {
         guard code.hasPrefix("MS1."), code.utf8.count < 8192 else { throw NativeError.message("Tempel undangan Mousharing lengkap dari master.") }
         var base = String(code.dropFirst(4)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/"); base += String(repeating: "=", count: (4 - base.count % 4) % 4)
         guard let data = Data(base64Encoded: base) else { throw NativeError.message("Undangan tidak terbaca. Salin ulang dari master.") }
-        let invite = try JSONDecoder().decode(Self.self, from: data)
+        let rawObject=try jsonObject(data);guard integer(rawObject["v"]) == 1,let port=integer(rawObject["port"]),port>0,port<=65535 else { throw NativeError.message("Versi atau port undangan tidak valid.") };let invite = try JSONDecoder().decode(Self.self, from: data)
         guard invite.v == 1, canonicalUUID(invite.id), !invite.name.isEmpty, invite.name.count <= 128, invite.port > 0 else { throw NativeError.message("Versi undangan tidak didukung.") }
         _ = try decoded(invite.key, count: 32)
         return invite

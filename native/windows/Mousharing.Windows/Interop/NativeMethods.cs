@@ -30,9 +30,12 @@ internal static class NativeMethods
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern nint GetModuleHandle(string? name);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern ushort RegisterClass(ref WindowClass cls);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool UnregisterClass(string name, nint instance);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern nint CreateWindowEx(uint exStyle, string cls, string title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, nint param);
     [DllImport("user32.dll")] public static extern nint DefWindowProc(nint h, uint m, nint w, nint l);
     [DllImport("user32.dll")] public static extern bool DestroyWindow(nint hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern nint FindWindow(string? className, string? title);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")] public static extern bool ShowWindow(nint hwnd, int command);
     [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(nint hwnd, uint color, byte alpha, uint flags);
     [DllImport("user32.dll")] public static extern nint SetCursor(nint cursor);

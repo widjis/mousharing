@@ -135,3 +135,5 @@ The fixture invitation key is bytes `0..31`, challenge bytes `32..63`, and clien
 ## Cross-runtime implementation checks
 
 `native/shared/dotnet/Mousharing.ProtocolChecks.csproj` links the production Windows `SecureChannel.cs` and `Invitation.cs` source without WinUI dependencies. Build it with `dotnet build native/shared/dotnet -c Release`, then run `.venv/bin/python native/shared/cross_runtime.py`. It verifies the actual .NET HKDF/AES-GCM/framing code against the fixture and exchanges encrypted Unicode clipboard payloads over TCP in both C#-master/Python-client and Python-master/C#-client roles. This harness never reads or modifies the system clipboard or captures input.
+
+`swift_loopback.py` starts the actual Swift app executable with its no-GUI/no-Keychain `--protocol-test-client` mode, authenticates it against a Python master, and exchanges encrypted Unicode payloads through `NativeSession`. Run `.venv/bin/python native/shared/swift_loopback.py` after a debug Swift build. The fixture invitation passed to the test process contains only the public deterministic test key.

@@ -23,9 +23,9 @@ final class NativeDiscovery {
             if object["query"] as? Bool == true { if advertise { broadcast(metadata,destination:from.sin_addr) }; return }
             guard let id=object["id"] as? String,UUID(uuidString:id) != nil,let name=object["name"] as? String,name.count<=128,object["port"] as? Int == Int(nativePort) else { return }
             var ip=[CChar](repeating:0,count:Int(INET_ADDRSTRLEN)); var raw=from.sin_addr; inet_ntop(AF_INET,&raw,&ip,socklen_t(ip.count)); self?.onFound?(DiscoveredDevice(id:id,name:name,host:String(cString:ip),lastSeen:Date()))
-        };read.resume();source=read
+        };read.setCancelHandler { close(fd) };read.resume();source=read
         let timer=DispatchSource.makeTimerSource(queue:queue);timer.schedule(deadline:.now(),repeating:2);timer.setEventHandler { if advertise { broadcast(metadata) } else { broadcast(["service":"mousharing-native","v":1,"id":identity.deviceID,"query":true]) } };timer.resume();self.timer=timer
     }
-    func stop() { timer?.cancel();timer=nil;source?.cancel();source=nil; if descriptor>=0 { close(descriptor);descriptor = -1 } }
+    func stop() { timer?.cancel();timer=nil;if let source { source.cancel();self.source=nil;descriptor = -1 } else if descriptor>=0 { close(descriptor);descriptor = -1 } }
     deinit { stop() }
 }

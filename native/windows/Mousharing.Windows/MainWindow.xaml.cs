@@ -20,14 +20,15 @@ public sealed partial class MainWindow : Window
     private readonly DiscoveryService discovery;
     private readonly TrayIcon tray;
     private readonly nint handle;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer discoveryExpiry;
     private readonly ObservableCollection<DiscoveredMaster> masters = [];
     private bool initialized, exiting;
-    public MainWindow()
+    public MainWindow(bool smokeTest = false)
     {
         InitializeComponent();
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         AppWindow.Resize(new SizeInt32(820, 940));
-        settings = Settings.Load();
+        settings = smokeTest ? new Settings() : Settings.Load();
         session = new(settings, DispatcherQueue, handle); session.Changed += Refresh;
         discovery = new(); session.Advertise = discovery.Advertise;
         discovery.Found += value => DispatcherQueue.TryEnqueue(() =>
@@ -36,14 +37,23 @@ public sealed partial class MainWindow : Window
             if (existing >= 0) masters[existing] = value; else if (masters.Count < 32 && value.Id != settings.DeviceId) masters.Add(value);
         });
         discovery.Status += text => DispatcherQueue.TryEnqueue(() => ShowMessage(text));
+        discoveryExpiry = DispatcherQueue.CreateTimer(); discoveryExpiry.Interval = TimeSpan.FromSeconds(3);
+        discoveryExpiry.Tick += (_, _) => { for (int i = masters.Count - 1; i >= 0; i--) if (DateTime.UtcNow - masters[i].LastSeen > TimeSpan.FromSeconds(10)) masters.RemoveAt(i); };
+        if (!smokeTest) discoveryExpiry.Start();
         MasterList.ItemsSource = masters;
         DeviceNameBox.Text = settings.DeviceName; RoleBox.SelectedIndex = settings.IsMaster ? 0 : 1;
         SideBox.SelectedIndex = settings.Side switch { "left" => 1, "top" => 2, "bottom" => 3, _ => 0 };
         ClipboardToggle.IsOn = settings.ClipboardEnabled; EdgeToggle.IsOn = settings.EdgeSwitchEnabled; AddressBox.Text = settings.ManualAddress;
         tray = new() { Open = OpenWindow, Pause = () => session.TogglePause(), Exit = Exit, IsPaused = () => session.Paused };
-        AppWindow.Closing += (_, args) => { if (!exiting) { args.Cancel = true; NativeMethods.ShowWindow(handle, 0); } };
-        Closed += (_, _) => { session.Dispose(); discovery.Dispose(); tray.Dispose(); };
-        initialized = true; discovery.Start(); Refresh();
+        AppWindow.Closing += (_, args) => { if (!exiting && tray.Available) { args.Cancel = true; NativeMethods.ShowWindow(handle, 0); } else if (!exiting) { exiting = true; session.Dispose(); discovery.Dispose(); tray.Dispose(); } };
+        Closed += (_, _) => { discoveryExpiry.Stop(); session.Dispose(); discovery.Dispose(); tray.Dispose(); };
+        initialized = true; if (!smokeTest) discovery.Start(); Refresh();
+    }
+    public void VerifySmokeAndClose()
+    {
+        if (Content.XamlRoot is null || !DeviceNameBox.IsLoaded || !ConnectButton.IsLoaded || !StatusBar.IsLoaded || session.Active || session.Connected)
+            throw new InvalidOperationException("UI smoke verification failed");
+        Exit();
     }
     private void OpenWindow() { NativeMethods.ShowWindow(handle, 9); Activate(); }
     private void Exit() { exiting = true; session.Dispose(); discovery.Dispose(); tray.Dispose(); Close(); }
@@ -52,8 +62,8 @@ public sealed partial class MainWindow : Window
     {
         if (!initialized) return;
         bool active = session.Active;
-        RoleBox.IsEnabled = DeviceNameBox.IsEnabled = SideBox.IsEnabled = ClipboardToggle.IsEnabled = EdgeToggle.IsEnabled = !active;
-        InvitationBox.IsEnabled = MasterList.IsEnabled = AddressBox.IsEnabled = !active;
+        RoleBox.IsEnabled = DeviceNameBox.IsEnabled = SideBox.IsEnabled = ClipboardToggle.IsEnabled = EdgeToggle.IsEnabled = !active && !session.Paused;
+        InvitationBox.IsEnabled = MasterList.IsEnabled = AddressBox.IsEnabled = !active && !session.Paused;
         MasterPanel.Visibility = RoleBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         ClientPanel.Visibility = RoleBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
         RoleHelp.Text = RoleBox.SelectedIndex == 0 ? "Mouse dan keyboard yang terpasang di Windows ini akan mengontrol perangkat pasangan." : "Mouse dan keyboard perangkat master akan mengontrol Windows ini.";
@@ -68,6 +78,7 @@ public sealed partial class MainWindow : Window
         ShowMessage(session.Status, session.Connected ? InfoBarSeverity.Success : InfoBarSeverity.Informational);
         tray.Update(session.Status);
         DrawScreens();
+        if (Settings.LoadFailure is not null) { ConnectButton.IsEnabled = PauseButton.IsEnabled = CopyInvitationButton.IsEnabled = ForgetPairingButton.IsEnabled = false; ShowMessage(Settings.LoadFailure, InfoBarSeverity.Error); }
     }
     private void ApplySettings()
     {
@@ -116,7 +127,7 @@ public sealed partial class MainWindow : Window
     private async void ForgetPairing(object sender, RoutedEventArgs e)
     {
         var dialog = new ContentDialog { XamlRoot = Content.XamlRoot, Title = "Hapus pairing?", Content = "Koneksi akan dihentikan dan akses pasangan lama dicabut. Buat atau tempel undangan baru untuk menyambungkan kembali.", PrimaryButtonText = "Hapus pairing", CloseButtonText = "Batal", DefaultButton = ContentDialogButton.Close };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary) { session.ForgetPairing(); InvitationBox.Password = ""; Refresh(); }
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary) { try { session.ForgetPairing(); InvitationBox.Password = ""; Refresh(); } catch (Exception exception) { ShowMessage(exception.Message, InfoBarSeverity.Error); } }
     }
     private void DrawScreens()
     {
@@ -131,7 +142,7 @@ public sealed partial class MainWindow : Window
         for (int i = 0; i < 2; i++)
         {
             bool isMaster = side is "left" or "top" ? i == 1 : i == 0;
-            var card = new Border { Width = 190, MinHeight = 100, Margin = new(6), Padding = new(14), CornerRadius = new(7), BorderThickness = new(2), BorderBrush = (Brush)Application.Current.Resources["SystemControlHighlightAccentBrush"], Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] };
+            var card = new Border { Width = 190, MinHeight = 100, Margin = new(6), Padding = new(14), CornerRadius = new(7), BorderThickness = new(2), BorderBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"], Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] };
             var text = new StackPanel { Spacing = 6 }; text.Children.Add(new TextBlock { Text = isMaster ? master : client, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 160 }); text.Children.Add(new TextBlock { Text = isMaster ? "Master · sumber input" : "Client · menerima input", TextWrapping = TextWrapping.Wrap, FontSize = 12 }); card.Child = text;
             if (vertical) Grid.SetRow(card, i); else Grid.SetColumn(card, i); ScreenPreview.Children.Add(card);
         }

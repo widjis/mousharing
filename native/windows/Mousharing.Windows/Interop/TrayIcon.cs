@@ -8,6 +8,8 @@ public sealed class TrayIcon : IDisposable
     private readonly WindowProc procedure;
     private nint window;
     private NotifyData data;
+    private readonly uint taskbarCreated = RegisterWindowMessage("TaskbarCreated");
+    public bool Available { get; private set; }
     public Action? Open;
     public Action? Pause;
     public Action? Exit;
@@ -18,17 +20,18 @@ public sealed class TrayIcon : IDisposable
         string name = "MousharingTray" + Environment.ProcessId;
         var cls = new WindowClass { proc = procedure, instance = GetModuleHandle(null), name = name };
         RegisterClass(ref cls);
-        window = CreateWindowEx(0, name, "Mousharing", 0, 0, 0, 0, 0, 0, 0, cls.instance, 0);
+        window = CreateWindowEx(0, name, "MousharingTray", 0, 0, 0, 0, 0, 0, 0, cls.instance, 0);
         data = new() { size = (uint)Marshal.SizeOf<NotifyData>(), window = window, id = 1, flags = 1 | 2 | 4, callback = 0x8002, icon = LoadIcon(0, (nint)32512), tip = "Mousharing · Tidak terhubung", info = "", infoTitle = "" };
-        Shell_NotifyIcon(0, ref data);
+        Available = Shell_NotifyIcon(0, ref data);
     }
     public void Update(string text)
     {
         data.tip = ("Mousharing · " + text)[..Math.Min(127, ("Mousharing · " + text).Length)];
-        Shell_NotifyIcon(1, ref data);
+        Available = Shell_NotifyIcon(1, ref data);
     }
     private nint WindowMessage(nint h, uint message, nint w, nint l)
     {
+        if (message == taskbarCreated) { Available = Shell_NotifyIcon(0, ref data); return 0; }
         if (message == 0x8002)
         {
             int action = (int)l & 0xFFFF;
@@ -56,6 +59,7 @@ public sealed class TrayIcon : IDisposable
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string infoTitle;
         public uint infoFlags; public Guid guid; public nint balloon;
     }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern bool Shell_NotifyIcon(uint message, ref NotifyData data);
     [DllImport("user32.dll")] private static extern nint LoadIcon(nint module, nint resource);
     [DllImport("user32.dll")] private static extern nint CreatePopupMenu();

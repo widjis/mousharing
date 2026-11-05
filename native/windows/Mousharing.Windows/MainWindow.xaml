@@ -18,7 +18,7 @@
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
           <StackPanel Spacing="14"><TextBlock Text="Sambungkan perangkat" Style="{ThemeResource SubtitleTextBlockStyle}"/>
             <StackPanel x:Name="MasterPanel" Spacing="12"><TextBlock Text="Bagikan undangan ini ke perangkat client, lalu tempel di aplikasi Mousharing-nya. Undangan memberi akses ke mouse, keyboard, dan clipboard selama sesi aktif." TextWrapping="Wrap"/>
-              <Button Content="Salin undangan pairing" Click="CopyInvitation" HorizontalAlignment="Left"/>
+              <Button x:Name="CopyInvitationButton" Content="Salin undangan pairing" Click="CopyInvitation" HorizontalAlignment="Left"/>
               <TextBlock Text="Setelah client terhubung pertama kali, identitasnya akan diingat. Untuk mengganti pasangan, hapus pairing terlebih dahulu." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
             </StackPanel>
             <StackPanel x:Name="ClientPanel" Spacing="12"><PasswordBox x:Name="InvitationBox" Header="Undangan dari master" PlaceholderText="Tempel undangan MS1.…" PasswordRevealMode="Peek" MaxLength="8192" AutomationProperties.Name="Undangan pairing dari perangkat master"/>
@@ -39,8 +39,8 @@
           <StackPanel Spacing="14"><TextBlock Text="Preferensi" Style="{ThemeResource SubtitleTextBlockStyle}"/>
             <ToggleSwitch x:Name="ClipboardToggle" Header="Bagikan clipboard teks" OnContent="Aktif" OffContent="Nonaktif"/>
             <ToggleSwitch x:Name="EdgeToggle" Header="Pindah otomatis lewat tepi layar" OnContent="Aktif" OffContent="Nonaktif"/>
-            <TextBlock Text="F8 berpindah kontrol secara manual. Escape selalu kembali ke master. Jeda menghentikan mouse, keyboard, dan clipboard; konfigurasi pasangan tetap tersimpan." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-            <Button Content="Hapus pairing…" Click="ForgetPairing" HorizontalAlignment="Left"/>
+            <TextBlock Text="Putuskan sesi sebelum mengubah peran atau preferensi. F8 berpindah kontrol secara manual. Escape selalu kembali ke master. Jeda menghentikan mouse, keyboard, dan clipboard; konfigurasi pasangan tetap tersimpan." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            <Button x:Name="ForgetPairingButton" Content="Hapus pairing…" Click="ForgetPairing" HorizontalAlignment="Left"/>
           </StackPanel>
         </Border>
       </StackPanel>

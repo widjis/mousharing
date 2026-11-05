@@ -53,11 +53,13 @@ public sealed class NativeInput : IDisposable
         threadId = GetCurrentThreadId();
         if (shutdown) { threadId = 0; return; }
         windowProc = WindowHandler;
-        string clsName = "MousharingCapture" + threadId;
+        string clsName = "MousharingCapture" + Guid.NewGuid().ToString("N");
+        bool registered = false;
         var cls = new WindowClass { proc = windowProc, instance = GetModuleHandle(null), name = clsName };
         try
         {
             if (RegisterClass(ref cls) == 0) throw new InvalidOperationException("Tidak bisa menyiapkan penangkap input.");
+            registered = true;
             overlay = CreateWindowEx(0x08080088, clsName, "Mousharing capture", 0x80000000, 0, 0, GetSystemMetrics(0), GetSystemMetrics(1), 0, 0, cls.instance, 0);
             if (overlay == 0 || !SetLayeredWindowAttributes(overlay, 0, 1, 2)) throw new InvalidOperationException("Tidak bisa menyiapkan kursor remote.");
             var raw = new RawDevice { page = 1, usage = 2, flags = 0x100, target = overlay };
@@ -76,11 +78,14 @@ public sealed class NativeInput : IDisposable
         catch (Exception e) { Failed?.Invoke(e.Message); }
         finally
         {
-            remote = false;
+            bool wasRemote = remote; remote = false;
+            if (wasRemote) { var point = Entry(side,.5); try { Warp(point.X,point.Y); } catch (InvalidOperationException) { } }
             physicalKeys.Clear(); physicalButtons.Clear(); reservedKeys.Clear();
             if (overlay != 0) { ShowWindow(overlay, 0); DestroyWindow(overlay); overlay = 0; }
             if (mouseHook != 0) UnhookWindowsHookEx(mouseHook);
             if (keyboardHook != 0) UnhookWindowsHookEx(keyboardHook);
+            if (registered) UnregisterClass(clsName, cls.instance);
+            GC.KeepAlive(windowProc);
             threadId = 0;
         }
     }
@@ -135,10 +140,11 @@ public sealed class NativeInput : IDisposable
         var key = Marshal.PtrToStructure<KeyHook>(data);
         if ((key.flags & 0x10) != 0 || key.extra == InjectionTag) return CallNextHookEx(keyboardHook, code, message, data);
         bool down = (int)message is 0x100 or 0x104;
-        if (key.vkCode is 0x77 or 0x1B && connected)
+        if (key.vkCode is 0x77 or 0x1B)
         {
             bool firstPress = down ? reservedKeys.Add(key.vkCode) : false;
             if (!down) reservedKeys.Remove(key.vkCode);
+            if (!connected) return CallNextHookEx(keyboardHook, code, message, data);
             if (firstPress) { if (key.vkCode == 0x1B || remote) ReturnLocal(); else if (physicalKeys.Count == 0 && physicalButtons.Count == 0) EnterRemote(); }
             return 1;
         }
@@ -217,8 +223,8 @@ public sealed class NativeInput : IDisposable
     }
     public void ReleaseInjected()
     {
-        foreach (string key in heldKeys.ToArray()) { var vk = VirtualKey(key); if (vk is not null) InjectKey(vk.Value, false); }
-        foreach (string button in heldButtons.ToArray()) InjectButton(button, false);
+        foreach (string key in heldKeys.ToArray()) { var vk = VirtualKey(key); if (vk is not null) { try { InjectKey(vk.Value, false); } catch (InvalidOperationException) { } } }
+        foreach (string button in heldButtons.ToArray()) { try { InjectButton(button, false); } catch (InvalidOperationException) { } }
         heldKeys.Clear(); heldButtons.Clear(); receiving = false;
     }
     private static int BoundedDelta(JsonObject frame, string field, int bound)

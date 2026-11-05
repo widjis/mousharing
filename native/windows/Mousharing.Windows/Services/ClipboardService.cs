@@ -52,7 +52,7 @@ public sealed class ClipboardService(nint owner, string origin)
         string text = frame["text"]?.GetValue<string>() ?? throw new InvalidDataException("Clipboard teks tidak valid.");
         long value = frame["clock"]?.GetValue<long>() ?? 0;
         string sender = frame["origin"]?.GetValue<string>() ?? "";
-        if (value < 1 || !Guid.TryParse(sender, out _) || text.Contains('\0') || Encoding.UTF8.GetByteCount(text) > Limit) throw new InvalidDataException("Clipboard tidak valid atau terlalu besar.");
+        if (value < 1 || value == long.MaxValue || !Guid.TryParse(sender, out _) || text.Contains('\0') || Encoding.UTF8.GetByteCount(text) > Limit) throw new InvalidDataException("Clipboard tidak valid atau terlalu besar.");
         clock = Math.Max(clock, value);
         if (value < stamp.Clock || value == stamp.Clock && string.CompareOrdinal(sender, stamp.Origin) <= 0) return;
         stamp = (value, sender);

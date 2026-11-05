@@ -16,6 +16,7 @@ public sealed class Settings
     public string? TrustedPeerId { get; set; }
     public string? MasterId { get; set; }
     public string? MasterName { get; set; }
+    public string? ClientSecretName { get; set; }
     public string[] Addresses { get; set; } = [];
 
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mousharing");
@@ -28,6 +29,9 @@ public sealed class Settings
         {
             var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? throw new JsonException();
             if (!Guid.TryParse(settings.DeviceId, out _) || string.IsNullOrWhiteSpace(settings.DeviceName) || settings.DeviceName.Length > 128 || settings.Side is not ("left" or "right" or "top" or "bottom")) throw new JsonException();
+            settings.Addresses ??= [];
+            if (settings.ClientSecretName is not null && (settings.ClientSecretName.Length != 39 || !settings.ClientSecretName.StartsWith("client-", StringComparison.Ordinal) || settings.ClientSecretName[7..].Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f')))) throw new JsonException();
+            if (settings.MasterId is not null && !Guid.TryParse(settings.MasterId,out _) || settings.TrustedPeerId is not null && !Guid.TryParse(settings.TrustedPeerId,out _)) throw new JsonException();
             return settings;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
@@ -35,6 +39,12 @@ public sealed class Settings
             LoadFailure = "Konfigurasi tersimpan tidak bisa dibaca. File dipertahankan di " + path + ". Pulihkan backup sebelum memakai aplikasi; konfigurasi tidak akan ditimpa.";
             return new();
         }
+    }
+    public Settings Copy() => JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(this)) ?? throw new InvalidOperationException("Konfigurasi tidak bisa disalin.");
+    public void ApplyPairingFrom(Settings candidate)
+    {
+        MasterId = candidate.MasterId; MasterName = candidate.MasterName; ClientSecretName = candidate.ClientSecretName;
+        TrustedPeerId = candidate.TrustedPeerId; Addresses = candidate.Addresses.ToArray(); ManualAddress = candidate.ManualAddress;
     }
     public void Save()
     {

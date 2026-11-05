@@ -149,6 +149,8 @@ def validate_hello(envelope,secret,challenge,expected_client_id=None):
     if base64_decode(hello.get('challenge'),32)!=challenge:
         raise ProtocolError('Handshake replay or wrong challenge')
     base64_decode(hello.get('clientNonce'),32)
+    if 'clipboard' in hello and type(hello['clipboard']) is not bool:
+        raise ProtocolError('Invalid clipboard capability')
     checked_id(hello.get('id'))
     if expected_client_id is not None and hello['id']!=expected_client_id:
         raise ProtocolError('Untrusted client identity')
@@ -165,7 +167,13 @@ def validate_welcome(envelope,secret,challenge,client_nonce,expected_master_id):
         base64_decode(welcome.get('clientNonce'),32)!=client_nonce or
         checked_id(welcome.get('id'))!=expected_master_id):
         raise ProtocolError('Welcome identity or nonce mismatch')
+    if 'clipboard' in welcome and type(welcome['clipboard']) is not bool:
+        raise ProtocolError('Invalid clipboard capability')
     return welcome
+
+
+def negotiate_clipboard(master_enabled,hello):
+    return master_enabled is True and hello.get('clipboard') is True
 
 
 @dataclass

@@ -63,12 +63,17 @@ public sealed class SecureChannel(TcpClient client, BoundedJsonReader reader, by
     public static byte[] OpenBytes(byte[] key, JsonObject frame, long sequence, string aad)
     {
         if (frame["seq"]?.GetValue<long>() != sequence) throw new CryptographicException("Nomor urut tidak cocok.");
-        byte[] nonce = DecodeBase64(frame["nonce"]!.GetValue<string>()), ciphertext = DecodeBase64(frame["ciphertext"]!.GetValue<string>()), tag = DecodeBase64(frame["tag"]!.GetValue<string>());
+        byte[] nonce = DecodeBase64(Text(frame,"nonce")), ciphertext = DecodeBase64(Text(frame,"ciphertext")), tag = DecodeBase64(Text(frame,"tag"));
         if (nonce.Length != 12 || tag.Length != 16) throw new CryptographicException("Format enkripsi tidak valid.");
         byte[] data = new byte[ciphertext.Length];
         using var aes = new AesGcm(key, 16);
         aes.Decrypt(nonce, ciphertext, tag, data, Encoding.UTF8.GetBytes(aad));
         return data;
+    }
+    public static string Text(JsonObject frame, string field)
+    {
+        if (frame[field] is JsonValue value && value.TryGetValue<string>(out string? text) && text is not null) return text;
+        throw new InvalidDataException("Field pesan tidak valid: " + field);
     }
     public static byte[] DecodeBase64(string value)
     {

@@ -43,8 +43,19 @@ jobs:
       MOUSHARING_FIXTURES: ${{ github.workspace }}/native/shared/fixtures.json
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install protocol-test dependency
+        run: python -m pip install 'cryptography>=46,<47'
       - name: Show Swift toolchain
         run: swift --version
+      - name: Build Swift protocol-test entry points
+        run: swift build --package-path native/macos
+      - name: Test actual Swift handshake and session against Python peer
+        run: |
+          native/macos/.build/debug/MousharingMac --self-test native/shared/fixtures.json
+          python native/shared/swift_loopback.py
       - name: Test actual Swift CryptoKit implementation
         run: swift test --package-path native/macos
       - name: Build native application bundle
@@ -88,6 +99,18 @@ jobs:
         run: |
           dotnet publish native/windows/Mousharing.Windows/Mousharing.Windows.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -p:WindowsAppSDKSelfContained=true -o artifacts/windows-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Load the native WinUI window without starting sharing
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path artifacts/windows-x64/Mousharing.Windows.exe).Path
+          $process = Start-Process -FilePath $exe -ArgumentList '--ui-smoke-test' -PassThru -RedirectStandardOutput artifacts/ui-smoke-stdout.txt -RedirectStandardError artifacts/ui-smoke-stderr.txt
+          if (-not $process.WaitForExit(20000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'Native WinUI startup timed out.'
+          }
+          Get-Content artifacts/ui-smoke-stderr.txt -ErrorAction SilentlyContinue
+          if ($process.ExitCode -ne 0) { throw "Native WinUI startup failed with exit code $($process.ExitCode)." }
+          Write-Host 'PASS native WinUI window loaded; sharing and clipboard remained inactive.'
       - uses: actions/upload-artifact@v7
         with:
           name: mousharing-windows-x64-development

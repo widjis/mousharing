@@ -16,6 +16,7 @@ public sealed class DiscoveryService : IDisposable
     private readonly CancellationTokenSource stop = new();
     private UdpClient? socket;
     private Settings? advertising;
+    private bool disposed;
     public event Action<DiscoveredMaster>? Found;
     public event Action<string>? Status;
     public void Advertise(Settings? settings) => advertising = settings;
@@ -72,5 +73,5 @@ public sealed class DiscoveryService : IDisposable
         }
         catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException) { }
     }
-    public void Dispose() { stop.Cancel(); socket?.Dispose(); stop.Dispose(); }
+    public void Dispose() { if (disposed) return; disposed = true; stop.Cancel(); socket?.Dispose(); stop.Dispose(); }
 }

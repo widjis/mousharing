@@ -23,9 +23,30 @@ struct AppSettings: Codable {
     var trustedPeerID: String?
     var pairedMasterID: String?
     var pairedMasterName: String?
+    var clientKeyAccount: String?
     static let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mousharing/settings.json")
-    static func load() -> AppSettings { (try? JSONDecoder().decode(Self.self, from: Data(contentsOf: url))) ?? Self() }
-    func save() throws { try FileManager.default.createDirectory(at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true); try JSONEncoder().encode(self).write(to: Self.url, options: [.atomic]) }
+    private(set) static var staticLoadFailure:String?
+    static func load(from location:URL = Self.url) -> AppSettings {
+        staticLoadFailure=nil
+        let data:Data
+        do { data=try Data(contentsOf:location) }
+        catch {
+            if let failure=error as? CocoaError,failure.code == .fileReadNoSuchFile { return Self() }
+            staticLoadFailure="Konfigurasi tidak dapat dibaca. File tetap dipertahankan: \(location.path). Perbaiki akses file lalu buka ulang Mousharing."
+            return Self(deviceID:"",deviceName:"Konfigurasi belum siap")
+        }
+        do { return try JSONDecoder().decode(Self.self,from:data) }
+        catch {
+            staticLoadFailure="Konfigurasi tidak valid. File tetap dipertahankan: \(location.path). Perbaiki atau pulihkan file tersebut lalu buka ulang Mousharing."
+            return Self(deviceID:"",deviceName:"Konfigurasi belum siap")
+        }
+    }
+    func save(to location:URL = Self.url) throws {
+        if let failure=Self.staticLoadFailure { throw NativeError.message(failure) }
+        try FileManager.default.createDirectory(at:location.deletingLastPathComponent(),withIntermediateDirectories:true)
+        try JSONEncoder().encode(self).write(to:location,options:[.atomic])
+    }
+
 }
 struct SecretStore {
     static func read(account: String = "master") throws -> Data? {

@@ -28,11 +28,11 @@ final class NativeSession {
     var ready: Bool { stage == 3 }
     init(connection: NWConnection, queue: DispatchQueue, server: Bool, identity: AppSettings, secret: Data, expectedMaster: String?=nil, allowedPeer: String?=nil) { self.connection=connection; self.queue=queue; self.server=server; self.identity=identity; self.secret=secret; self.expectedMaster=expectedMaster; self.allowedPeer=allowedPeer }
     func start() {
-        connection.stateUpdateHandler = { [weak self] state in guard let self else { return }; switch state { case .ready: if self.server { self.challenge=randomBytes(32); self.write(["type":"challenge","v":1,"challenge":encoded(self.challenge),"id":self.identity.deviceID,"name":self.identity.deviceName]); self.stage=1 }; self.receive(); self.startTimer(); case .failed(let error): self.close("Koneksi gagal: \(error.localizedDescription)"); case .cancelled: self.close("Koneksi ditutup."); default: break } }
-        connection.start(queue: queue)
+        connection.stateUpdateHandler = { [weak self] state in guard let self else { return }; switch state { case .ready: if self.server { self.challenge=randomBytes(32); self.write(["type":"challenge","v":1,"challenge":encoded(self.challenge),"id":self.identity.deviceID,"name":self.identity.deviceName]); self.stage=1 }; self.receive(); case .failed(let error): self.close("Koneksi gagal: \(error.localizedDescription)"); case .cancelled: self.close("Koneksi ditutup."); default: break } }
+        startTimer();connection.start(queue: queue)
     }
     private func startTimer() { let timer=DispatchSource.makeTimerSource(queue:queue); timer.schedule(deadline:.now()+1,repeating:1); timer.setEventHandler { [weak self] in guard let self else { return }; if self.ready { if Date().timeIntervalSince(self.lastReceive)>6 { self.close("Koneksi tidak merespons. Hubungkan ulang.") } else { self.send(["type":"ping"]) } } else if Date().timeIntervalSince(self.started)>15 { self.close("Pairing tidak selesai. Periksa undangan dan alamat master.") } }; self.timer=timer; timer.resume() }
-    private func receive() { connection.receive(minimumIncompleteLength:1,maximumLength:65536) { [weak self] data,_,done,error in guard let self,!self.closed else { return }; if let data { self.buffer.append(data); if self.buffer.count>maxNativeFrame && !self.buffer.contains(10) { self.close("Pesan terlalu besar."); return }; while let newline=self.buffer.firstIndex(of:10) { let line=Data(self.buffer[..<newline]); self.buffer.removeSubrange(...newline); guard line.count<=maxNativeFrame else { self.close("Pesan terlalu besar."); return }; do { try self.handle(jsonObject(line)); self.lastReceive=Date() } catch { self.close("Pairing atau autentikasi pesan gagal. Periksa undangan pairing."); return } } }; if done || error != nil { self.close("Perangkat terputus.") } else { self.receive() } } }
+    private func receive() { connection.receive(minimumIncompleteLength:1,maximumLength:65536) { [weak self] data,_,done,error in guard let self,!self.closed else { return }; if let data { self.buffer.append(data); if self.buffer.count>maxNativeFrame && !self.buffer.contains(10) { self.close("Pesan terlalu besar."); return }; while let newline=self.buffer.firstIndex(of:10) { let line=Data(self.buffer[..<newline]); self.buffer.removeSubrange(...newline); guard line.count+1<=maxNativeFrame else { self.close("Pesan terlalu besar."); return }; do { try self.handle(jsonObject(line)); self.lastReceive=Date() } catch { self.close("Pairing atau autentikasi pesan gagal. Periksa undangan pairing."); return } } }; if done || error != nil { self.close("Perangkat terputus.") } else { self.receive() } } }
     private func handle(_ frame:[String:Any]) throws {
         let key=SymmetricKey(data:secret)
         if stage == 0 && !server {
@@ -42,14 +42,14 @@ final class NativeSession {
         }
         if stage == 1 && server {
             let hello=try SessionCipher.open(frame,key:key,aad:"mousharing-native-v1:hello",sequence:0)
-            guard hello["type"] as? String == "hello", integer(hello["v"]) == 1, try decoded(hello["challenge"],count:32) == challenge, let peer=hello["id"] as? String, canonicalUUID(peer), allowedPeer == nil || allowedPeer == peer else { throw NativeError.message("Perangkat belum dipercaya.") }
+            guard hello["type"] as? String == "hello", integer(hello["v"]) == 1, try decoded(hello["challenge"],count:32) == challenge, let peer=hello["id"] as? String, canonicalUUID(peer),peer != identity.deviceID,let peerName=hello["name"] as? String,!peerName.isEmpty,peerName.count<=128, allowedPeer == nil || allowedPeer == peer else { throw NativeError.message("Perangkat belum dipercaya.") }
             clientNonce=try decoded(hello["clientNonce"],count:32)
             clipboardAllowed=identity.clipboardEnabled && boolean(hello["clipboard"]) == true
             write(try SessionCipher.seal(["type":"welcome","v":1,"challenge":encoded(challenge),"clientNonce":encoded(clientNonce),"id":identity.deviceID,"name":identity.deviceName,"clipboard":clipboardAllowed],key:key,aad:"mousharing-native-v1:welcome",sequence:0)); establish(); onReady?(peer,String((hello["name"] as? String ?? "Client").prefix(128)),clipboardAllowed); return
         }
         if stage == 2 && !server {
             let welcome=try SessionCipher.open(frame,key:key,aad:"mousharing-native-v1:welcome",sequence:0)
-            guard welcome["type"] as? String == "welcome", integer(welcome["v"]) == 1, welcome["id"] as? String == expectedMaster, try decoded(welcome["challenge"],count:32) == challenge, try decoded(welcome["clientNonce"],count:32) == clientNonce else { throw NativeError.message("Pairing gagal.") }
+            guard welcome["type"] as? String == "welcome", integer(welcome["v"]) == 1, welcome["id"] as? String == expectedMaster,let peerName=welcome["name"] as? String,!peerName.isEmpty,peerName.count<=128, try decoded(welcome["challenge"],count:32) == challenge, try decoded(welcome["clientNonce"],count:32) == clientNonce else { throw NativeError.message("Pairing gagal.") }
             clipboardAllowed=identity.clipboardEnabled && boolean(welcome["clipboard"]) == true
             establish(); onReady?(expectedMaster!,String((welcome["name"] as? String ?? "Master").prefix(128)),clipboardAllowed); return
         }
@@ -59,7 +59,7 @@ final class NativeSession {
     }
     private func establish() { outbound=SessionCipher(key:SessionCipher.derive(secret:secret,challenge:challenge,clientNonce:clientNonce,direction:server ? "s2c":"c2s"),direction:server ? "s2c":"c2s"); inbound=SessionCipher(key:SessionCipher.derive(secret:secret,challenge:challenge,clientNonce:clientNonce,direction:server ? "c2s":"s2c"),direction:server ? "c2s":"s2c"); stage=3 }
     func send(_ payload:[String:Any]) { guard payload["type"] as? String != "clipboard" || clipboardAllowed else { return };guard ready,!closed,var cipher=outbound else { return }; do { let frame=try cipher.seal(payload); outbound=cipher; write(frame) } catch { close("Pesan tidak dapat dikirim.") } }
-    private func write(_ frame:[String:Any]) { do { var data=try jsonData(frame); guard data.count<=maxNativeFrame else { close("Pesan terlalu besar."); return }; data.append(10); guard pendingBytes+data.count<=4*1024*1024 else { close("Koneksi terlalu lambat. Sharing dijeda.");return };pendingBytes+=data.count;let count=data.count; connection.send(content:data,completion:.contentProcessed { [weak self] error in self?.pendingBytes-=count;if error != nil { self?.close("Pengiriman terputus.") } }) } catch { close("Pesan tidak valid.") } }
+    private func write(_ frame:[String:Any]) { do { var data=try jsonData(frame); guard data.count+1<=maxNativeFrame else { close("Pesan terlalu besar."); return }; data.append(10); guard pendingBytes+data.count<=4*1024*1024 else { close("Koneksi terlalu lambat. Sharing dijeda.");return };pendingBytes+=data.count;let count=data.count; connection.send(content:data,completion:.contentProcessed { [weak self] error in self?.pendingBytes-=count;if error != nil { self?.close("Pengiriman terputus.") } }) } catch { close("Pesan tidak valid.") } }
     func close(_ reason:String) { guard !closed else { return }; closed=true; timer?.cancel(); connection.cancel(); onClose?(reason); onClose=nil }
 }
 final class NativeService {
@@ -75,7 +75,7 @@ final class NativeService {
     var onState:((UUID,Bool,String,Bool)->Void)?
     var onPayload:((UUID,[String:Any])->Void)?
     var onPeer:((UUID,String)->Void)?
-    private func stopOnQueue() { listener?.cancel();listener=nil;session?.send(["type":"reset"]);session?.close("Sharing dijeda");session=nil }
+    private func stopOnQueue() { listener?.cancel();listener=nil;if session?.server == true { session?.send(["type":"reset"]) };session?.close("Sharing dijeda");session=nil }
     func start(settings:AppSettings,secret:Data,expectedMaster:String?) {
         let token=newOperation()
         queue.async { [weak self] in guard let self,self.operationID==token else { return };self.stopOnQueue();self.acceptedPeerID=settings.trustedPeerID;self.retryAttempt=0;do {

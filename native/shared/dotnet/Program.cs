@@ -92,6 +92,7 @@ internal static class ProtocolChecks
             var changed = Clone(sample); changed["seq"] = invalid.DeepClone();
             Reject(() => SecureChannel.Open(c2s, changed, 1, Prefix + "c2s:1"), "sequence type");
         }
+        Reject(() => SecureChannel.Open(secret, new JsonObject { ["seq"] = 0 }, 0, Prefix + "hello"), "missing encrypted envelope fields");
         var badNonce = Clone(sample); badNonce["nonce"] = Convert.ToBase64String(new byte[11]);
         Reject(() => SecureChannel.Open(c2s, badNonce, 1, Prefix + "c2s:1"), "nonce length");
         var whitespace = Clone(sample); whitespace["nonce"] = " " + Text(whitespace, "nonce");

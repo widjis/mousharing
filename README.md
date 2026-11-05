@@ -1,5 +1,9 @@
 # mousharing
 
+## Aplikasi native Mac dan Windows
+
+Pengembangan GUI native berada di [`native/`](native/README.md): SwiftUI/AppKit pada Mac dan C#/WinUI 3 pada Windows. Kedua aplikasi mendukung peran master/client dari konfigurasi dan pairing lewat undangan. Ini development preview dengan protokol terpisah; prototipe Python di bawah tetap tersedia. Lihat panduan native untuk paket build, cara pairing, dan batas verifikasinya.
+
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
 **Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 29 tes protokol, clipboard, geometri, dan simulasi perpindahan lulus. Backend clipboard Mac diuji dengan pasteboard terpisah; clipboard native Windows masih perlu uji pada kedua laptop. Belum ada GUI atau installer.
