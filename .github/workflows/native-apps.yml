@@ -94,6 +94,8 @@ jobs:
         run: dotnet build native/shared/dotnet/Mousharing.ProtocolChecks.csproj -c Release
       - name: Test C# vectors and cross-runtime TCP in both roles
         run: python native/shared/cross_runtime.py
+      - name: Test session processing while UI dispatcher is stalled
+        run: dotnet run --project native/shared/session-checks/SessionChecks.csproj -c Release
       - name: Publish native WinUI application
         shell: pwsh
         run: |

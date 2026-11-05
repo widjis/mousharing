@@ -16,7 +16,7 @@ public sealed class SessionController : IDisposable
     private volatile SecureChannel? channel;
     private NativeInput input = new();
     private ClipboardService? clipboard;
-    private DispatcherQueueTimer? clipboardTimer;
+    private System.Threading.Timer? clipboardTimer;
     private volatile OutboundQueue? outbound;
     private long lastReceived;
     private volatile bool paused;
@@ -80,7 +80,8 @@ public sealed class SessionController : IDisposable
                 input.StartMaster(Settings.Side, Settings.EdgeSwitchEnabled);
                 Advertise?.Invoke(Settings);
                 Report("Menunggu perangkat client · bagikan undangan pairing");
-                _ = AcceptLoop(key, stop.Token);
+                var token = stop.Token;
+                _ = Task.Run(() => AcceptLoop(key, token));
             }
             catch (Exception e) { Stop(); Report("Tidak bisa membuka koneksi: " + e.Message); }
         }
@@ -88,7 +89,8 @@ public sealed class SessionController : IDisposable
         {
             byte[] key = storedKey!;
             Report("Menghubungkan ke " + Settings.MasterName + "…");
-            _ = ConnectLoop(key, stop.Token);
+            var token = stop.Token;
+            _ = Task.Run(() => ConnectLoop(key, token));
         }
         Changed?.Invoke();
     }
@@ -126,15 +128,16 @@ public sealed class SessionController : IDisposable
     }
     private async Task RememberPeerAsync(string peerId, int expectedOperation, CancellationToken token)
     {
-        var saved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        UI(() =>
+        // Persistence belongs to the session, not the visible window's dispatcher.
+        lock (lifecycle)
         {
-            if (expectedOperation != operation || token.IsCancellationRequested) { saved.TrySetCanceled(token); return; }
+            token.ThrowIfCancellationRequested();
+            if (expectedOperation != operation) throw new OperationCanceledException(token);
             string? previous = Settings.TrustedPeerId;
-            try { Settings.TrustedPeerId = peerId; Settings.Save(); saved.TrySetResult(true); }
-            catch (Exception e) { Settings.TrustedPeerId = previous; saved.TrySetException(new InvalidOperationException("Pairing belum bisa disimpan. Periksa akses folder konfigurasi sebelum mencoba kembali.", e)); }
-        });
-        await saved.Task.WaitAsync(token);
+            try { Settings.TrustedPeerId = peerId; Settings.Save(); }
+            catch (Exception e) { Settings.TrustedPeerId = previous; throw new InvalidOperationException("Pairing belum bisa disimpan. Periksa akses folder konfigurasi sebelum mencoba kembali.", e); }
+        }
+        await Task.CompletedTask;
     }
     private async Task ConnectLoop(byte[] key, CancellationToken token)
     {
@@ -184,29 +187,44 @@ public sealed class SessionController : IDisposable
         using (current)
         using (var session = CancellationTokenSource.CreateLinkedTokenSource(token))
         {
-            token.ThrowIfCancellationRequested();
-            int currentGeneration = Interlocked.Increment(ref generation);
-            channel = current; outbound = new(); negotiatedClipboard = clipboardAllowed; lastReceived = Environment.TickCount64;
-            UI(() =>
+            int currentGeneration;
+            OutboundQueue sessionQueue;
+            NativeInput sessionInput;
+            lock (lifecycle)
             {
-                if (currentGeneration != generation || token.IsCancellationRequested) return;
+                token.ThrowIfCancellationRequested();
+                currentGeneration = Interlocked.Increment(ref generation);
+                channel = current; outbound = sessionQueue = new(); sessionInput = input; negotiatedClipboard = clipboardAllowed; lastReceived = Environment.TickCount64;
                 clipboard = new(owner, Settings.DeviceId) { Outbound = message => Enqueue(message, expectedGeneration: currentGeneration) };
                 clipboard.Reset();
                 if (negotiatedClipboard) clipboard.Tick();
-                clipboardTimer = dispatcher.CreateTimer(); clipboardTimer.Interval = TimeSpan.FromMilliseconds(250);
-                clipboardTimer.Tick += (_, _) => { if (currentGeneration != generation || token.IsCancellationRequested) return; if (negotiatedClipboard && !paused && Connected) clipboard?.Tick(); };
-                clipboardTimer.Start(); input.SetConnected(!paused);
-                Status = "Terhubung dengan " + peer; Changed?.Invoke();
-            });
-            var sessionQueue = outbound!;
-            var sessionInput = input;
+                clipboardTimer = new System.Threading.Timer(_ =>
+                {
+                    lock (lifecycle)
+                    {
+                        if (currentGeneration != generation || token.IsCancellationRequested || paused || !Connected) return;
+                        try { if (negotiatedClipboard) clipboard?.Tick(); }
+                        catch (Exception e) { Stop(); Report(SafeError(e)); }
+                    }
+                }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+                input.SetConnected(!paused);
+            }
+            Report("Terhubung dengan " + peer);
             Task send = WriterLoop(current, sessionQueue, session.Token), read = ReaderLoop(current, sessionInput, currentGeneration, session.Token), monitor = Watchdog(session.Token);
             try { await Task.WhenAny(send, read, monitor); }
             finally
             {
                 session.Cancel(); current.Dispose();
-                if (currentGeneration == generation) { channel = null; outbound = null; }
-                UI(() => { if (currentGeneration != generation) return; clipboardTimer?.Stop(); clipboardTimer = null; clipboard = null; input.SetConnected(false); input.ReleaseInjected(); Control = "Mengontrol Windows ini"; Changed?.Invoke(); });
+                lock (lifecycle)
+                {
+                    if (currentGeneration == generation)
+                    {
+                        channel = null; outbound = null;
+                        clipboardTimer?.Dispose(); clipboardTimer = null; clipboard = null;
+                        input.SetConnected(false); input.ReleaseInjected();
+                        UI(() => { if (currentGeneration != generation) return; Control = "Mengontrol Windows ini"; Changed?.Invoke(); });
+                    }
+                }
                 try { await Task.WhenAll(send, read, monitor); } catch (Exception e) when (e is IOException or SocketException or OperationCanceledException or ObjectDisposedException or InvalidDataException or CryptographicException or InvalidOperationException or FormatException or System.Text.Json.JsonException) { }
             }
         }
@@ -231,7 +249,15 @@ public sealed class SessionController : IDisposable
             string type = message["type"]?.GetValue<string>() ?? throw new InvalidDataException("Pesan tidak valid.");
             if (type == "ping") { Enqueue(new() { ["type"] = "pong" }, expectedGeneration: currentGeneration); continue; }
             if (type == "pong") continue;
-            if (type == "clipboard") { UI(() => { if (currentGeneration != generation || !ReferenceEquals(channel,current) || token.IsCancellationRequested) return; if (!paused && negotiatedClipboard) { try { clipboard?.Receive(message); } catch (Exception e) { Stop(); Report(SafeError(e)); } } }); continue; }
+            if (type == "clipboard")
+            {
+                lock (lifecycle)
+                {
+                    if (currentGeneration != generation || !ReferenceEquals(channel,current) || token.IsCancellationRequested) return;
+                    if (!paused && negotiatedClipboard) clipboard?.Receive(message);
+                }
+                continue;
+            }
             if (Settings.IsMaster)
             {
                 if (type != "leave") throw new InvalidDataException("Client mengirim arah input yang tidak diizinkan.");
@@ -242,7 +268,13 @@ public sealed class SessionController : IDisposable
             else
             {
                 if (type is not ("enter" or "move" or "button" or "key" or "scroll" or "reset")) throw new InvalidDataException("Pesan sesi tidak dikenal.");
-                UI(() => { if (currentGeneration != generation || !ReferenceEquals(channel,current) || token.IsCancellationRequested) return; if (!paused || type == "reset") { try { sessionInput.Receive(message); } catch (Exception e) { Stop(); Report(SafeError(e)); } } });
+                // Never queue input behind WinUI rendering/visibility. Serialize with
+                // Stop and clipboard cleanup so stale sessions cannot inject after stop.
+                lock (lifecycle)
+                {
+                    if (currentGeneration != generation || !ReferenceEquals(channel,current) || token.IsCancellationRequested) return;
+                    if (!paused || type == "reset") sessionInput.Receive(message);
+                }
             }
         }
     }
@@ -273,9 +305,9 @@ public sealed class SessionController : IDisposable
             Interlocked.Increment(ref generation); Interlocked.Increment(ref operation);
             stop?.Cancel(); stop?.Dispose(); stop = null; listener?.Stop(); listener = null;
             channel?.Dispose(); channel = null; outbound = null;
-            clipboardTimer?.Stop(); clipboardTimer = null; clipboard = null;
+            clipboardTimer?.Dispose(); clipboardTimer = null; clipboard = null;
             input.Dispose(); paused = false; Advertise?.Invoke(null);
-            Status = "Tidak terhubung"; Control = "Mengontrol Windows ini"; Changed?.Invoke();
+            Status = "Tidak terhubung"; Control = "Mengontrol Windows ini"; UI(() => Changed?.Invoke());
         }
     }
     public void ForgetPairing()
