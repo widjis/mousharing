@@ -2,7 +2,7 @@
 
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
-**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 28 tes protokol, clipboard, geometri, dan simulasi perpindahan lulus. Backend clipboard Mac diuji dengan pasteboard terpisah; clipboard native Windows masih perlu uji pada kedua laptop. Belum ada GUI atau installer.
+**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 29 tes protokol, clipboard, geometri, dan simulasi perpindahan lulus. Backend clipboard Mac diuji dengan pasteboard terpisah; clipboard native Windows masih perlu uji pada kedua laptop. Belum ada GUI atau installer.
 
 - **Tepi layar:** otomatis berpindah antara Mac dan Windows; keyboard mengikuti perangkat yang sedang dikontrol.
 - **F8 / Fn+F8:** alternatif untuk berpindah kontrol secara manual.

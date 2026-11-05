@@ -100,8 +100,13 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen,
         with context.wrap_socket(raw, server_side=True) as conn:
             events = messages(conn)
             hello = next(events)
-            if (hello.get('version') != PROTOCOL_VERSION or
-                    not secrets.compare_digest(str(hello.get('token','')).encode('utf-8'), token.encode('utf-8'))):
+            if hello.get('version') != PROTOCOL_VERSION:
+                send(conn,{'ready':False,'error':'protocol',
+                           'message':'Protocol mismatch. Update and restart both laptops.'})
+                raise ValueError('Protocol mismatch')
+            if not secrets.compare_digest(str(hello.get('token','')).encode('utf-8'),token.encode('utf-8')):
+                send(conn,{'ready':False,'error':'pairing',
+                           'message':'Pairing password does not match the Windows receiver.'})
                 raise ValueError('Pairing rejected')
             send_lock=threading.Lock()
             def reply(event):
@@ -218,9 +223,14 @@ def transmit(args):
     conn = context.wrap_socket(raw, server_hostname=args.host)
     send(conn, {'token':token, 'version':PROTOCOL_VERSION,'clipboard':not getattr(args,'no_clipboard',False)})
     incoming = messages(conn)
-    ready=next(incoming)
+    try:
+        ready=next(incoming)
+    except StopIteration:
+        conn.close()
+        raise SystemExit('Receiver closed pairing. Update and restart the Windows receiver, then check that both pairing passwords match.') from None
     if ready.get('ready') is not True:
-        raise SystemExit('Receiver rejected connection')
+        conn.close()
+        raise SystemExit(ready.get('message','Receiver rejected connection'))
     clipboard=None
     if ready.get('clipboard') is True and not getattr(args,'no_clipboard',False):
         clipboard=ClipboardSync(make_clipboard())

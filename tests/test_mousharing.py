@@ -54,7 +54,7 @@ class TLSSessionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.directory.cleanup()
 
-    def session(self, token='test-password-123456',clipboard_factory=None,clipboard_enabled=True):
+    def session(self, token='test-password-123456',clipboard_factory=None,clipboard_enabled=True,protocol_version=None):
         listener = socket.create_server(('127.0.0.1',0))
         kb,pointer = Mock(),Mock(position=(100,100))
         keyboard = SimpleNamespace(KeyCode=SimpleNamespace(from_vk=lambda vk:vk),
@@ -71,7 +71,7 @@ class TLSSessionTests(unittest.TestCase):
         client_context.check_hostname=False
         client=client_context.wrap_socket(socket.create_connection(listener.getsockname(),timeout=2))
         client.settimeout(2)
-        app.send(client,{'version':app.PROTOCOL_VERSION,'token':token,'clipboard':clipboard_factory is not None})
+        app.send(client,{'version':app.PROTOCOL_VERSION if protocol_version is None else protocol_version,'token':token,'clipboard':clipboard_factory is not None})
         return client,app.messages(client),thread,kb,pointer
 
     def test_auth_heartbeat_reset_and_disconnect_release(self):
@@ -174,6 +174,9 @@ class TLSSessionTests(unittest.TestCase):
             conn,events,thread,kb,pointer=self.session(token=password,clipboard_factory=factory,clipboard_enabled=enabled)
             try:
                 if password == 'wrong-password':
+                    rejected=next(events)
+                    self.assertFalse(rejected['ready'])
+                    self.assertEqual(rejected['error'],'pairing')
                     self.assertEqual(list(events),[])
                 else:
                     self.assertFalse(next(events)['clipboard'])
@@ -189,9 +192,28 @@ class TLSSessionTests(unittest.TestCase):
             factory.assert_not_called()
             self.assertFalse(thread.is_alive())
 
+    def test_wrong_protocol_reports_update_required_before_clipboard_access(self):
+        factory=Mock(return_value=MemoryClipboard())
+        conn,events,thread,kb,pointer=self.session(clipboard_factory=factory,protocol_version=2)
+        try:
+            rejected=next(events)
+            self.assertFalse(rejected['ready'])
+            self.assertEqual(rejected['error'],'protocol')
+            self.assertEqual(list(events),[])
+        finally:
+            events.close()
+            conn.close()
+            thread.join(3)
+        factory.assert_not_called()
+        kb.press.assert_not_called()
+        self.assertFalse(thread.is_alive())
+
     def test_wrong_password_cannot_inject_input(self):
         conn,events,thread,kb,pointer=self.session(token='wrong-password')
         try:
+            rejected=next(events)
+            self.assertFalse(rejected['ready'])
+            self.assertEqual(rejected['error'],'pairing')
             self.assertEqual(list(events),[])
         finally:
             events.close()
