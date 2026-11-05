@@ -2,7 +2,7 @@
 
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
-**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 19 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
+**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 28 tes protokol, clipboard, geometri, dan simulasi perpindahan lulus. Backend clipboard Mac diuji dengan pasteboard terpisah; clipboard native Windows masih perlu uji pada kedua laptop. Belum ada GUI atau installer.
 
 - **Tepi layar:** otomatis berpindah antara Mac dan Windows; keyboard mengikuti perangkat yang sedang dikontrol.
 - **F8 / Fn+F8:** alternatif untuk berpindah kontrol secara manual.
@@ -11,7 +11,7 @@ Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN
 - TLS dengan sertifikat Windows yang disalin secara eksplisit ke Mac dan password pairing minimal 16 karakter.
 - Heartbeat dua arah; tombol yang ditahan dilepas saat reset, disconnect, atau timeout receiver 5 detik. Mac kembali ke mode lokal ketika koneksi gagal atau respons heartbeat habis waktu.
 - Tidak merekam input atau menyimpan password pairing.
-- Clipboard belum disinkronkan; copy/paste tetap lokal pada tiap laptop.
+- Clipboard teks otomatis dua arah melalui koneksi TLS yang sama, maksimum 256 KiB UTF-8 per salinan. Isi clipboard tidak dicatat ke log atau file.
 - Untuk hide cursor, proses Mac menjadi aplikasi aksesori foreground tanpa jendela atau ikon Dock selama remote. Fokus aplikasi Mac sebelumnya dipulihkan saat kembali lokal. Input selama transisi ditahan sampai capture siap.
 - Saat remote, gerakan fisik mouse dilepas dari kursor Mac dan event lokal ditekan. Jika hide/capture kursor gagal, kontrol tetap pada Mac. Jika fokus foreground atau event tap hilang saat remote, sesi dihentikan dan kontrol dikembalikan ke Mac.
 
@@ -38,9 +38,26 @@ Saat ini satu layar utama per laptop. Setelah mengubah resolusi, scaling, atau l
 .venv/bin/python mousharing.py send --host IP_WINDOWS --cert data/windows-cert.pem --no-edge-switch
 ```
 
-**Update perbaikan capture/jitter:** hentikan sender dan receiver, jalankan `git pull --ff-only` di kedua laptop, lalu mulai receiver Windows dan sender Mac kembali. Sertifikat dan dependency tetap digunakan. Capture lokal dan kelancaran mouse perlu diuji langsung; tes otomatis memakai input tiruan.
+## Clipboard sharing
 
-**Pembaruan dari prototipe pertama:** hentikan program lalu jalankan `git pull --ff-only` di Mac dan Windows (atau unduh ulang ZIP). Kedua perangkat perlu source terbaru karena protokol sudah versi 2. Dependency tidak berubah; sertifikat yang sudah ada tetap digunakan.
+Setelah `Connected` dan `Clipboard text sharing: enabled`, teks baru yang disalin di salah satu laptop otomatis menggantikan clipboard laptop pasangan. Sinkronisasi tetap berjalan saat mouse berada di Mac maupun Windows, dengan interval pemeriksaan sekitar 250 ms. Clipboard yang sudah ada sebelum sesi dimulai tidak otomatis dikirim; salin ulang teks setelah terhubung.
+
+- Copy/paste di Mac: **Command+C / Command+V**.
+- Copy/paste saat mengontrol Windows: **Control+C / Control+V** pada keyboard Mac. Command tetap dipetakan ke tombol Windows.
+- Teks Unicode, emoji, baris baru, dan teks kosong didukung. Batasnya 256 KiB UTF-8; konten lebih besar dilewati.
+- Gambar, file, rich text, dan format HTML belum ditransfer. Jika aplikasi juga menyediakan versi teks, hanya teksnya yang dikirim.
+- Konten hasil sinkronisasi tidak dikirim balik. Revisi logis mengurutkan salinan yang bersamaan agar kedua sisi konsisten. Clipboard yang sedang sibuk dicoba ulang tanpa memutus kontrol mouse.
+- Sinkronisasi berhenti saat koneksi ditutup; isi terakhir tetap tersedia di clipboard sistem masing-masing.
+
+Untuk mematikan clipboard sharing dari Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-windows.ps1 -NoClipboard
+```
+
+Atau jalankan sender Mac langsung dengan `--no-clipboard`. Jika salah satu perangkat mematikannya, clipboard sharing tidak diaktifkan untuk sesi tersebut.
+
+**Update ke versi clipboard:** hentikan sender/receiver, jalankan `git pull --ff-only` pada kedua laptop (atau perbarui source dari ZIP), lalu mulai receiver Windows dan sender Mac kembali. Protokol kini versi 3. Dependency dan sertifikat lama tetap digunakan; setup tidak perlu diulang.
 
 ## 1. Setup Windows
 
@@ -117,7 +134,14 @@ Mulai dalam mode lokal. Lewati tepi yang menghadap Windows untuk berpindah otoma
 
 Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengetik atau menggerakkan mouse pengguna. Sertifikat tes dibuat sementara dengan generator yang sama dengan setup Windows. Tes mencakup framing pesan, pemetaan tombol shortcut, password salah, sertifikat tidak dipercaya, heartbeat, reset, pelepasan tombol saat disconnect, empat susunan layar, dan resolusi berbeda. Simulasi event loop sender melalui TLS menguji perpindahan Mac → Windows → Mac serta hide/show dan pemulihan posisi kursor tanpa memakai input fisik. Tes tambahan memeriksa nullifikasi klik remote di Mac, kegagalan hide/capture, penghentian ketika tap mati, urutan klik/tombol selama batching gerakan, dan jitter tepi. Gerakan berurutan digabung dalam jendela sekitar 4 ms dan koneksi memakai TCP_NODELAY untuk mengurangi antrean; performa fisik belum diukur. Skrip PowerShell telah diperiksa sintaksnya dari Mac; eksekusi Windows belum dilakukan.
 
-## Uji dua laptop yang masih diperlukan
+## Uji clipboard pada kedua laptop
+
+1. Setelah terhubung, copy teks baru di Mac, menyeberang, lalu paste ke Notepad Windows dengan Ctrl+V.
+2. Copy teks baru di Windows dengan Ctrl+C, kembali ke Mac, lalu paste dengan Command+V.
+3. Uji emoji dan teks beberapa baris, lalu pastikan keyboard/mouse tetap lancar selama copy/paste.
+4. Uji opsi `-NoClipboard`: kontrol input tetap aktif, clipboard tidak berubah antarperangkat.
+
+## Uji input pada kedua laptop
 
 1. Jalankan receiver dan sender; mode lokal hanya memengaruhi Mac.
 2. Lewati tepi kanan Mac (default), lalu tepi kiri Windows: pastikan kontrol dan keyboard berpindah dua arah. Uji F8 sebagai alternatif.
@@ -129,7 +153,7 @@ Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengeti
 
 ## Batas saat ini
 
-Belum ada GUI, installer, auto-discovery, clipboard, dukungan monitor tambahan, atau autostart. Perangkat sumber input saat ini tetap Mac; Windows menerima input dan dapat mengembalikan kontrol saat kursor melewati tepi bersama. Pemetaan mengikuti posisi ANSI US; layout lain, IME, Fn, media keys, scaling lintas perangkat secara fisik, dan kombinasi modifier kiri/kanan bersamaan belum divalidasi. Sinkronisasi Caps Lock antarperangkat belum tersedia. Secure Input macOS dapat membatasi capture. Aplikasi Windows elevated/UAC dan lock screen bukan target prototipe ini.
+Belum ada GUI, installer, auto-discovery, transfer clipboard gambar/file, dukungan monitor tambahan, atau autostart. Perangkat sumber input saat ini tetap Mac; Windows menerima input dan dapat mengembalikan kontrol saat kursor melewati tepi bersama. Pemetaan mengikuti posisi ANSI US; layout lain, IME, Fn, media keys, scaling lintas perangkat secara fisik, dan kombinasi modifier kiri/kanan bersamaan belum divalidasi. Sinkronisasi Caps Lock antarperangkat belum tersedia. Secure Input macOS dapat membatasi capture. Aplikasi Windows elevated/UAC dan lock screen bukan target prototipe ini.
 
 Source dan dependency dipisahkan dari identitas lokal: `.venv/`, `data/`, sertifikat, dan private key diabaikan Git. Simpan backup identitas Windows secara privat jika diperlukan; setup tidak merotasi sertifikat secara otomatis.
 
@@ -137,4 +161,6 @@ Referensi implementasi: [Quartz event taps](https://developer.apple.com/document
 
 API layar: [Windows GetSystemMetrics](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics), [DPI awareness](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setprocessdpiawarenesscontext).
 
-Hide cursor mengikuti batasan foreground pada [API Apple CGDisplayHideCursor](https://developer.apple.com/documentation/coregraphics/cgdisplayhidecursor(_:)). Perbaikan aktivasi foreground hanya memerlukan restart sender Mac; protokol dan receiver Windows tidak berubah.
+Hide cursor mengikuti batasan foreground pada [API Apple CGDisplayHideCursor](https://developer.apple.com/documentation/coregraphics/cgdisplayhidecursor(_:)). Aktivasi foreground berlangsung hanya selama remote; setelahnya fokus aplikasi sebelumnya dipulihkan.
+
+API clipboard: [Apple NSPasteboard](https://developer.apple.com/documentation/appkit/nspasteboard), [Windows OpenClipboard](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard), [Windows SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata).

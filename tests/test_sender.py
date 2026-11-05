@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch, call
 
 import mousharing as app
+from test_clipboard import MemoryClipboard
 from scripts.init_certificate import create_identity
 
 
@@ -38,7 +39,10 @@ class SenderTests(unittest.TestCase):
     def test_waits_for_foreground_before_sending_windows_input(self):
         self.run_simulation(disconnect=False,failure='activation')
 
-    def run_simulation(self,disconnect,failure=None):
+    def test_sender_synchronizes_clipboard_both_directions_while_switching(self):
+        self.run_simulation(disconnect=False,clipboard_mode=True)
+
+    def run_simulation(self,disconnect,failure=None,clipboard_mode=False):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             cert,key=create_identity(directory)
             context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -47,6 +51,8 @@ class SenderTests(unittest.TestCase):
             host,port=listener.getsockname()
             pointer=Mock(position=(100,100))
             kb=Mock()
+            mac_clipboard=MemoryClipboard('preexisting Mac value')
+            win_clipboard=MemoryClipboard('preexisting Windows value')
             keyboard=SimpleNamespace(Key=SimpleNamespace(),KeyCode=SimpleNamespace())
             mouse=SimpleNamespace(Button=SimpleNamespace(left='left'))
             peer_connections=[]
@@ -58,7 +64,8 @@ class SenderTests(unittest.TestCase):
             def serve():
                 with listener:
                     raw,_=listener.accept()
-                    app.handle_connection(raw,CapturingContext(),'test-password-123456',kb,pointer,keyboard,mouse,app.Screen(0,0,1920,1080))
+                    app.handle_connection(raw,CapturingContext(),'test-password-123456',kb,pointer,keyboard,mouse,app.Screen(0,0,1920,1080),
+                        clipboard_factory=(lambda:win_clipboard) if clipboard_mode else None)
             server=threading.Thread(target=serve,daemon=True)
             server.start()
             q=SimpleNamespace()
@@ -121,6 +128,8 @@ class SenderTests(unittest.TestCase):
                     self.assertIs(q.callback(None,1,local_click,None),local_click)
                     self.assertIs(q.callback(None,2,local_click,None),local_click)
                     self.assertNotIn('nullified',local_click)
+                    if clipboard_mode:
+                        mac_clipboard.copy('Mac clipboard to Windows 👋')
                     crossing={'dx':5,'dy':0}
                     result=q.callback(None,5,crossing,None)
                     self.assertIsNone(result)
@@ -141,6 +150,9 @@ class SenderTests(unittest.TestCase):
                     peer_connections[0].shutdown(socket.SHUT_RDWR)
                     stage=4
                 elif stage == 1 and pointer.position[0] == 12:
+                    if clipboard_mode:
+                        self.assertEqual(win_clipboard.text,'Mac clipboard to Windows 👋')
+                        win_clipboard.copy('Windows clipboard back to Mac ✅')
                     for kind in (1,2):
                         remote_click={}
                         self.assertIsNone(q.callback(None,kind,remote_click,None))
@@ -151,12 +163,13 @@ class SenderTests(unittest.TestCase):
                     self.assertIsNone(q.callback(None,5,{'dx':-1000,'dy':0},None))
                     stage=3
                 elif stage == 3 and q.CGWarpMouseCursorPosition.called:
-                    raise FinishedSimulation()
+                    if not clipboard_mode or mac_clipboard.text == 'Windows clipboard back to Mac ✅':
+                        raise FinishedSimulation()
                 time.sleep(0.01)
             q.CFRunLoopRunInMode=run_loop
             args=SimpleNamespace(host=host,port=port,cert=str(cert),windows_side='right',no_edge_switch=False)
             try:
-                with patch.dict(sys.modules,{'Quartz':q,'AppKit':kit}), patch.object(app.sys,'platform','darwin'), patch.object(app.getpass,'getpass',return_value='test-password-123456'):
+                with patch.dict(sys.modules,{'Quartz':q,'AppKit':kit}), patch.object(app.sys,'platform','darwin'), patch.object(app.getpass,'getpass',return_value='test-password-123456'), patch.object(app,'make_clipboard',return_value=mac_clipboard):
                     if disconnect or failure == 'tap':
                         app.transmit(args)
                     else:
@@ -165,6 +178,10 @@ class SenderTests(unittest.TestCase):
             finally:
                 server.join(3)
             self.assertFalse(server.is_alive())
+            if clipboard_mode:
+                self.assertTrue(mac_clipboard.closed)
+                self.assertTrue(win_clipboard.closed)
+                self.assertEqual(mac_clipboard.text,'Windows clipboard back to Mac ✅')
             q.CGDisplayHideCursor.assert_called_once_with(1)
             previous.activateWithOptions_.assert_called_once_with(2)
             self.assertFalse(foreground.active)

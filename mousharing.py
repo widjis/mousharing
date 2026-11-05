@@ -16,9 +16,11 @@ from screens import Screen, SIDES, OPPOSITE, fraction, windows_primary_screen, R
 
 from input_transport import take_input
 from cursor_capture import MacCursorCapture
+from clipboard_sync import ClipboardSync, make_clipboard, checked_event, MAX_TEXT_BYTES, POLL_SECONDS
 
 PORT = 47831
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
+MAX_FRAME_BYTES = 6*MAX_TEXT_BYTES+4096
 # Use physical Windows virtual keys so Ctrl+C/V works as keyboard shortcuts.
 WINDOWS_VK = {c: ord(c.upper()) for c in 'abcdefghijklmnopqrstuvwxyz0123456789'}
 WINDOWS_VK.update({';':0xBA, '=':0xBB, ',':0xBC, '-':0xBD, '.':0xBE,
@@ -31,20 +33,27 @@ CODES.update({122:'f1',120:'f2',99:'f3',118:'f4',96:'f5',97:'f6',98:'f7',100:'f8
 
 
 def send(sock, event):
-    sock.sendall((json.dumps(event, separators=(',', ':'))+'\n').encode())
+    frame=(json.dumps(event, ensure_ascii=False, separators=(',', ':'))+'\n').encode('utf-8')
+    if len(frame) > MAX_FRAME_BYTES:
+        raise ValueError('Frame exceeds size limit')
+    sock.sendall(frame)
 
 
 def messages(sock):
     with sock.makefile('rb') as stream:
         while True:
-            line = stream.readline(4097)
+            line = stream.readline(MAX_FRAME_BYTES+1)
             if not line:
                 return
-            if len(line) > 4096 or not line.endswith(b'\n'):
+            if len(line) > MAX_FRAME_BYTES or not line.endswith(b'\n'):
                 raise ValueError('Invalid frame')
             event = json.loads(line)
             if not isinstance(event, dict):
                 raise ValueError('Expected object')
+            if event.get('type') == 'clipboard':
+                checked_event(event)
+            elif len(line) > 4096:
+                raise ValueError('Input frame exceeds size limit')
             yield event
 
 
@@ -64,11 +73,16 @@ def receive(args):
         print('Waiting for Mac. Ctrl+C stops receiver.', flush=True)
         while True:
             raw, address = server.accept()
-            handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
+            handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen,
+                              clipboard_factory=make_clipboard,clipboard_enabled=not args.no_clipboard)
 
 
-def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen):
+def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen,
+                      clipboard_factory=None,clipboard_enabled=True):
     """One authenticated session; always release pressed inputs on exit."""
+    clipboard=None
+    clip_stop=threading.Event()
+    clip_thread=None
     held_keys, held_buttons = set(), set()
     active = False
     return_gate = ReturnGate()
@@ -89,12 +103,40 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
             if (hello.get('version') != PROTOCOL_VERSION or
                     not secrets.compare_digest(str(hello.get('token','')).encode('utf-8'), token.encode('utf-8'))):
                 raise ValueError('Pairing rejected')
-            send(conn, {'ready': True, 'screen':{'width':screen.width,'height':screen.height}})
+            send_lock=threading.Lock()
+            def reply(event):
+                with send_lock:
+                    send(conn,event)
+            if clipboard_enabled and hello.get('clipboard') is True and clipboard_factory:
+                try:
+                    clipboard=ClipboardSync(clipboard_factory())
+                except (OSError,ValueError):
+                    print('Clipboard unavailable; input sharing remains active.',flush=True)
+            reply({'ready':True,'screen':{'width':screen.width,'height':screen.height},
+                   'clipboard':clipboard is not None})
+            if clipboard is not None:
+                def poll_clipboard():
+                    try:
+                        while not clip_stop.wait(POLL_SECONDS):
+                            event=clipboard.poll()
+                            if event is not None:
+                                reply(event)
+                    except OSError:
+                        try:
+                            conn.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                clip_thread=threading.Thread(target=poll_clipboard,daemon=True)
+                clip_thread.start()
             print('Mac connected.', flush=True)
             for event in events:
                 kind = event.get('type')
                 if kind == 'ping':
-                    send(conn, {'type':'pong'})
+                    reply({'type':'pong'})
+                    continue
+                if kind == 'clipboard':
+                    if clipboard is not None:
+                        clipboard.apply_event(event)
                     continue
                 if kind == 'reset':
                     return_gate.reset()
@@ -121,7 +163,7 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
                     if event.get('edge_switch') and return_gate.should_leave(screen,OPPOSITE[side],x,y,dx,dy,blocked=bool(held_keys or held_buttons)):
                         active=False
                         release_inputs()
-                        send(conn, {'type':'leave','switch_id':switch_id,
+                        reply({'type':'leave','switch_id':switch_id,
                                     'ratio':screen.ratio(OPPOSITE[side],x,y)})
                 elif kind == 'scroll':
                     pointer.scroll(max(-100,min(100,int(event['dx']))), max(-100,min(100,int(event['dy']))))
@@ -147,6 +189,11 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
     except (OSError, ValueError, TypeError, KeyError, AttributeError, StopIteration) as exc:
         print('Connection ended:', type(exc).__name__, flush=True)
     finally:
+        clip_stop.set()
+        if clip_thread is not None:
+            clip_thread.join(timeout=1)
+        if clipboard is not None:
+            clipboard.close()
         raw.close()
         release_inputs()
 
@@ -169,11 +216,15 @@ def transmit(args):
     raw = socket.create_connection((args.host,args.port),timeout=5)
     raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
     conn = context.wrap_socket(raw, server_hostname=args.host)
-    send(conn, {'token':token, 'version':PROTOCOL_VERSION})
+    send(conn, {'token':token, 'version':PROTOCOL_VERSION,'clipboard':not getattr(args,'no_clipboard',False)})
     incoming = messages(conn)
     ready=next(incoming)
     if ready.get('ready') is not True:
         raise SystemExit('Receiver rejected connection')
+    clipboard=None
+    if ready.get('clipboard') is True and not getattr(args,'no_clipboard',False):
+        clipboard=ClipboardSync(make_clipboard())
+    print('Clipboard text sharing: '+('enabled' if clipboard is not None else 'disabled'),flush=True)
     peer=ready['screen']
     Screen(0,0,float(peer['width']),float(peer['height']))
     print('Windows primary screen: {} x {}; Windows is {} of Mac.'.format(peer['width'],peer['height'],args.windows_side),flush=True)
@@ -226,6 +277,10 @@ def transmit(args):
                 print('Mac foreground activation timed out. Staying on Mac.',flush=True)
                 go_local()
             return
+        if clipboard is not None:
+            update=clipboard.poll()
+            if update is not None:
+                enqueue(update)
         state.update(pending=False,remote=True,switch_id=state['switch_id']+1)
         enqueue({'type':'enter','side':args.windows_side,'ratio':state['ratio'],
                  'switch_id':state['switch_id']})
@@ -233,7 +288,7 @@ def transmit(args):
     def monitor():
         try:
             for reply in incoming:
-                if reply.get('type') == 'leave':
+                if reply.get('type') in ('leave','clipboard'):
                     controls.put_nowait(reply)
                 elif reply.get('type') != 'pong':
                     raise ValueError('Unexpected receiver response')
@@ -338,6 +393,7 @@ def transmit(args):
     Q.CFRunLoopAddSource(Q.CFRunLoopGetCurrent(),source,Q.kCFRunLoopCommonModes)
     Q.CGEventTapEnable(tap,True)
     print('Connected. Move across the shared edge, or use F8. Escape returns to Mac.',flush=True)
+    next_clipboard_poll=time.monotonic()+POLL_SECONDS
     try:
         while state['alive']:
             cursor.pump()
@@ -356,13 +412,24 @@ def transmit(args):
                     reply=controls.get_nowait()
                 except queue.Empty:
                     break
+                if reply.get('type') == 'clipboard':
+                    if clipboard is not None:
+                        clipboard.apply_event(reply)
+                    continue
                 if state['remote'] and reply.get('switch_id') == state['switch_id']:
                     go_local(reply['ratio'])
+            if clipboard is not None and time.monotonic() >= next_clipboard_poll:
+                update=clipboard.poll()
+                if update is not None:
+                    enqueue(update)
+                next_clipboard_poll=time.monotonic()+POLL_SECONDS
             Q.CFRunLoopRunInMode(Q.kCFRunLoopDefaultMode,0.02,False)
     finally:
         go_local()
         Q.CGEventTapEnable(tap,False)
         disconnect()
+        if clipboard is not None:
+            clipboard.close()
 
 
 def main():
@@ -380,6 +447,7 @@ def main():
     for command in (receiver,sender):
         command.add_argument('--cert',required=True)
         command.add_argument('--port',type=int,default=PORT)
+        command.add_argument('--no-clipboard',action='store_true',help='Disable clipboard sharing on this device')
     args = parser.parse_args()
     try:
         if args.role == 'fingerprint':

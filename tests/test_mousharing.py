@@ -4,10 +4,12 @@ import ssl
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
+from test_clipboard import MemoryClipboard
+from clipboard_sync import ClipboardSync
 
 import mousharing as app
 from scripts.init_certificate import create_identity
@@ -52,7 +54,7 @@ class TLSSessionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.directory.cleanup()
 
-    def session(self, token='test-password-123456'):
+    def session(self, token='test-password-123456',clipboard_factory=None,clipboard_enabled=True):
         listener = socket.create_server(('127.0.0.1',0))
         kb,pointer = Mock(),Mock(position=(100,100))
         keyboard = SimpleNamespace(KeyCode=SimpleNamespace(from_vk=lambda vk:vk),
@@ -62,14 +64,14 @@ class TLSSessionTests(unittest.TestCase):
             with listener:
                 raw,_ = listener.accept()
                 with redirect_stdout(io.StringIO()):
-                    app.handle_connection(raw,self.context,'test-password-123456',kb,pointer,keyboard,mouse,app.Screen(0,0,1920,1080))
+                    app.handle_connection(raw,self.context,'test-password-123456',kb,pointer,keyboard,mouse,app.Screen(0,0,1920,1080),clipboard_factory=clipboard_factory,clipboard_enabled=clipboard_enabled)
         thread=threading.Thread(target=serve,daemon=True)
         thread.start()
         client_context=ssl.create_default_context(cafile=str(self.cert))
         client_context.check_hostname=False
         client=client_context.wrap_socket(socket.create_connection(listener.getsockname(),timeout=2))
         client.settimeout(2)
-        app.send(client,{'version':app.PROTOCOL_VERSION,'token':token})
+        app.send(client,{'version':app.PROTOCOL_VERSION,'token':token,'clipboard':clipboard_factory is not None})
         return client,app.messages(client),thread,kb,pointer
 
     def test_auth_heartbeat_reset_and_disconnect_release(self):
@@ -136,6 +138,56 @@ class TLSSessionTests(unittest.TestCase):
             conn.close()
             thread.join(3)
         self.assertFalse(thread.is_alive())
+
+    def test_clipboard_bidirectional_over_tls_without_input_focus_or_echo(self):
+        windows=MemoryClipboard('existing Windows clipboard')
+        mac=MemoryClipboard('existing Mac clipboard')
+        mac_sync=ClipboardSync(mac)
+        conn,events,thread,kb,pointer=self.session(clipboard_factory=lambda:windows)
+        try:
+            self.assertTrue(next(events)['clipboard'])
+            mac.copy('Mac → Windows 👋\n'*1200)
+            app.send(conn,mac_sync.poll())
+            app.send(conn,{'type':'ping'})
+            self.assertEqual(next(events),{'type':'pong'})
+            self.assertEqual(windows.text,mac.text)
+            windows.copy('Windows → Mac ✅\n'*1200)
+            received=next(events)
+            self.assertEqual(received['type'],'clipboard')
+            mac_sync.apply_event(received)
+            self.assertEqual(mac.text,windows.text)
+            self.assertIsNone(mac_sync.poll())
+            app.send(conn,{'type':'ping'})
+            self.assertEqual(next(events),{'type':'pong'})
+            kb.press.assert_not_called()
+        finally:
+            conn.shutdown(socket.SHUT_RDWR)
+            events.close()
+            conn.close()
+            thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(windows.closed)
+
+    def test_clipboard_is_never_opened_before_authentication_or_when_disabled(self):
+        for password,enabled in [('wrong-password',True),('test-password-123456',False)]:
+            factory=Mock(return_value=MemoryClipboard())
+            conn,events,thread,kb,pointer=self.session(token=password,clipboard_factory=factory,clipboard_enabled=enabled)
+            try:
+                if password == 'wrong-password':
+                    self.assertEqual(list(events),[])
+                else:
+                    self.assertFalse(next(events)['clipboard'])
+                    app.send(conn,{'type':'clipboard','text':'must not be applied','clock':1,'origin':'a'*32})
+                    app.send(conn,{'type':'ping'})
+                    self.assertEqual(next(events),{'type':'pong'})
+            finally:
+                with suppress(OSError):
+                    conn.shutdown(socket.SHUT_RDWR)
+                events.close()
+                conn.close()
+                thread.join(3)
+            factory.assert_not_called()
+            self.assertFalse(thread.is_alive())
 
     def test_wrong_password_cannot_inject_input(self):
         conn,events,thread,kb,pointer=self.session(token='wrong-password')
