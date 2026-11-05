@@ -99,6 +99,18 @@ jobs:
         run: |
           dotnet publish native/windows/Mousharing.Windows/Mousharing.Windows.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -p:WindowsAppSDKSelfContained=true -o artifacts/windows-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inspect native resource packaging
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/windows-x64 -Recurse -File | Select-Object FullName,Length | Out-File artifacts/publish-files.txt
+          Get-ChildItem artifacts/windows-x64 -Recurse -File | Where-Object Extension -in '.pri','.xbf','.xaml' | Select-Object FullName,Length | Format-Table -AutoSize
+          $pri = Get-ChildItem artifacts/windows-x64 -Filter resources.pri -File | Select-Object -First 1
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter makepri.exe -Recurse -ErrorAction SilentlyContinue | Where-Object FullName -Match '\\x64\\' | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($pri -and $tool) {
+            & $tool.FullName dump /if $pri.FullName /of artifacts/pri-dump.xml
+            Select-String -Path artifacts/pri-dump.xml -Pattern 'MainWindow|App.xaml|App.xbf' -ErrorAction SilentlyContinue
+          } else { Write-Host 'App resources.pri or makepri not present in publish environment.' }
+          exit 0
       - name: Load the native WinUI window without starting sharing
         shell: pwsh
         run: |
@@ -117,3 +129,15 @@ jobs:
           path: artifacts/windows-x64/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Save startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mousharing-windows-startup-diagnostics
+          path: |
+            artifacts/ui-smoke-*.txt
+            artifacts/publish-files.txt
+            artifacts/pri-dump.xml
+          if-no-files-found: ignore
+          retention-days: 7
