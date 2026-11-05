@@ -2,21 +2,21 @@
   <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="28" RowSpacing="18">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <StackPanel Spacing="4"><TextBlock Text="Mousharing" Style="{ThemeResource TitleTextBlockStyle}"/><TextBlock Text="Satu mouse dan keyboard, dua perangkat." Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+      <StackPanel Spacing="4"><TextBlock Text="Mousharing" Style="{StaticResource TitleTextBlockStyle}"/><TextBlock Text="Satu mouse dan keyboard, dua perangkat." Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><ProgressRing x:Name="BusyRing" Width="22" Height="22" IsActive="False"/><TextBlock x:Name="ControlLabel" Text="Mengontrol Windows ini" VerticalAlignment="Center"/></StackPanel>
     </Grid>
     <InfoBar Grid.Row="1" x:Name="StatusBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="Siap disambungkan"/>
     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Spacing="18" Padding="0,0,12,16">
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
-          <StackPanel Spacing="14"><TextBlock Text="Perangkat ini" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+          <StackPanel Spacing="14"><TextBlock Text="Perangkat ini" Style="{StaticResource SubtitleTextBlockStyle}"/>
             <TextBox x:Name="DeviceNameBox" Header="Nama perangkat" MaxLength="128" AutomationProperties.Name="Nama perangkat Windows ini"/>
             <ComboBox x:Name="RoleBox" Header="Peran perangkat" HorizontalAlignment="Stretch" SelectionChanged="RoleChanged"><ComboBoxItem Content="Master — bagikan mouse dan keyboard Windows ini"/><ComboBoxItem Content="Client — gunakan mouse dan keyboard master"/></ComboBox>
             <TextBlock x:Name="RoleHelp" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
           </StackPanel>
         </Border>
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
-          <StackPanel Spacing="14"><TextBlock Text="Sambungkan perangkat" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+          <StackPanel Spacing="14"><TextBlock Text="Sambungkan perangkat" Style="{StaticResource SubtitleTextBlockStyle}"/>
             <StackPanel x:Name="MasterPanel" Spacing="12"><TextBlock Text="Bagikan undangan ini ke perangkat client, lalu tempel di aplikasi Mousharing-nya. Undangan memberi akses ke mouse, keyboard, dan clipboard selama sesi aktif." TextWrapping="Wrap"/>
               <Button x:Name="CopyInvitationButton" Content="Salin undangan pairing" Click="CopyInvitation" HorizontalAlignment="Left"/>
               <TextBlock Text="Setelah client terhubung pertama kali, identitasnya akan diingat. Untuk mengganti pasangan, hapus pairing terlebih dahulu." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
@@ -29,14 +29,14 @@
           </StackPanel>
         </Border>
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
-          <StackPanel Spacing="14"><TextBlock Text="Susunan layar" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+          <StackPanel Spacing="14"><TextBlock Text="Susunan layar" Style="{StaticResource SubtitleTextBlockStyle}"/>
             <Grid x:Name="ScreenPreview" MinHeight="126" HorizontalAlignment="Center" Margin="0,4"/>
             <ComboBox x:Name="SideBox" Header="Posisi client terhadap master" HorizontalAlignment="Stretch" SelectionChanged="SideChanged"><ComboBoxItem Content="Kanan" Tag="right"/><ComboBoxItem Content="Kiri" Tag="left"/><ComboBoxItem Content="Atas" Tag="top"/><ComboBoxItem Content="Bawah" Tag="bottom"/></ComboBox>
             <TextBlock Text="Master menentukan susunan. Kursor menyeberang melalui tepi yang saling berhadapan. Satu layar utama per perangkat." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
           </StackPanel>
         </Border>
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
-          <StackPanel Spacing="14"><TextBlock Text="Preferensi" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+          <StackPanel Spacing="14"><TextBlock Text="Preferensi" Style="{StaticResource SubtitleTextBlockStyle}"/>
             <ToggleSwitch x:Name="ClipboardToggle" Header="Bagikan clipboard teks" OnContent="Aktif" OffContent="Nonaktif"/>
             <ToggleSwitch x:Name="EdgeToggle" Header="Pindah otomatis lewat tepi layar" OnContent="Aktif" OffContent="Nonaktif"/>
             <TextBlock Text="Putuskan sesi sebelum mengubah peran atau preferensi. F8 berpindah kontrol secara manual. Escape selalu kembali ke master. Jeda menghentikan mouse, keyboard, dan clipboard; konfigurasi pasangan tetap tersimpan." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>

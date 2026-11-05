@@ -15,12 +15,21 @@ public partial class App : Application
         if (smokeTest)
         {
             ownsInstance = true;
-            UnhandledException += (_, error) => { Console.Error.WriteLine(error.Exception); Environment.Exit(1); };
+            DebugSettings.IsXamlResourceReferenceTracingEnabled = true;
+            DebugSettings.XamlResourceReferenceFailed += (_, error) => Console.Error.WriteLine("XAML resource lookup: " + error.Message);
+            UnhandledException += (_, error) => { LogSmokeException(error.Exception); Environment.Exit(1); };
             smokeTimeout = new System.Threading.Timer(_ => { Console.Error.WriteLine("WinUI smoke test timed out before Loaded verification."); Environment.Exit(2); }, null, 12_000, Timeout.Infinite);
         }
         else instanceMutex = new Mutex(true, @"Local\Mousharing.Native.Windows", out ownsInstance);
         try { InitializeComponent(); }
-        catch (Exception error) { if (smokeTest) { Console.Error.WriteLine(error); Environment.Exit(1); } throw; }
+        catch (Exception error) { if (smokeTest) { LogSmokeException(error); Environment.Exit(1); } throw; }
+    }
+    private static void LogSmokeException(Exception error)
+    {
+        Console.Error.WriteLine($"WinUI startup failure HRESULT=0x{error.HResult:X8}: {error}");
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            foreach (System.Collections.DictionaryEntry item in current.Data)
+                Console.Error.WriteLine($"Exception.Data[{item.Key}]: {item.Value}");
     }
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
@@ -46,11 +55,11 @@ public partial class App : Application
                         smokeTimeout?.Dispose();
                         Environment.Exit(0);
                     }
-                    catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
+                    catch (Exception error) { LogSmokeException(error); Environment.Exit(1); }
                 };
             }
             window.Activate();
         }
-        catch (Exception error) { if (smokeTest) { Console.Error.WriteLine(error); Environment.Exit(1); } throw; }
+        catch (Exception error) { if (smokeTest) { LogSmokeException(error); Environment.Exit(1); } throw; }
     }
 }
