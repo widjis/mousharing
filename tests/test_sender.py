@@ -35,6 +35,9 @@ class SenderTests(unittest.TestCase):
     def test_disabled_tap_stops_remote_and_restores_cursor(self):
         self.run_simulation(disconnect=False,failure='tap')
 
+    def test_waits_for_foreground_before_sending_windows_input(self):
+        self.run_simulation(disconnect=False,failure='activation')
+
     def run_simulation(self,disconnect,failure=None):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             cert,key=create_identity(directory)
@@ -72,7 +75,22 @@ class SenderTests(unittest.TestCase):
                 setattr(q,name,field)
             q.CGMainDisplayID=lambda:1
             q.CGDisplayBounds=lambda _:SimpleNamespace(origin=SimpleNamespace(x=0,y=0),size=SimpleNamespace(width=1440,height=900))
-            q.CGDisplayHideCursor=Mock(return_value=1 if failure == 'hide' else 0)
+            foreground=SimpleNamespace(active=False)
+            foreground.setActivationPolicy_=Mock()
+            foreground.finishLaunching=Mock()
+            foreground.nextEventMatchingMask_untilDate_inMode_dequeue_=Mock(return_value=None)
+            foreground.sendEvent_=Mock()
+            foreground.isActive=lambda:foreground.active
+            foreground.activateIgnoringOtherApps_=Mock(side_effect=lambda _:setattr(foreground,'active',failure != 'activation'))
+            previous=SimpleNamespace(activateWithOptions_=Mock(side_effect=lambda _:setattr(foreground,'active',False)))
+            kit=SimpleNamespace(NSApplication=SimpleNamespace(sharedApplication=lambda:foreground),
+                NSApplicationActivationPolicyAccessory=1,NSApplicationActivateIgnoringOtherApps=2,
+                NSWorkspace=SimpleNamespace(sharedWorkspace=lambda:SimpleNamespace(frontmostApplication=lambda:previous)),
+                NSEventMaskAny=0,NSDate=SimpleNamespace(distantPast=lambda:None),NSDefaultRunLoopMode=0)
+            def hide_cursor(_):
+                self.assertTrue(foreground.active,'Cursor must be hidden by foreground app')
+                return 1 if failure == 'hide' else 0
+            q.CGDisplayHideCursor=Mock(side_effect=hide_cursor)
             q.CGAssociateMouseAndMouseCursorPosition=Mock(return_value=1 if failure == 'detach' else 0)
             q.kCGEventNull=0
             q.CGEventSetType=Mock(side_effect=lambda event,kind:event.update(nullified=True))
@@ -105,12 +123,17 @@ class SenderTests(unittest.TestCase):
                     self.assertNotIn('nullified',local_click)
                     crossing={'dx':5,'dy':0}
                     result=q.callback(None,5,crossing,None)
-                    if failure in ('hide','detach'):
-                        self.assertIs(result,crossing)
-                        raise FinishedSimulation()
                     self.assertIsNone(result)
                     self.assertTrue(crossing['nullified'])
                     stage=1
+                elif stage == 1 and failure == 'activation' and not foreground.active:
+                    q.CGDisplayHideCursor.assert_not_called()
+                    self.assertEqual(pointer.position,(100,100))
+                    for kind in (1,2):
+                        self.assertIsNone(q.callback(None,kind,{},None))
+                    foreground.active=True
+                elif stage == 1 and failure in ('hide','detach') and q.CGDisplayHideCursor.called:
+                    raise FinishedSimulation()
                 elif stage == 1 and pointer.position[0] == 12 and failure == 'tap':
                     tap_enabled=False
                     stage=4
@@ -133,7 +156,7 @@ class SenderTests(unittest.TestCase):
             q.CFRunLoopRunInMode=run_loop
             args=SimpleNamespace(host=host,port=port,cert=str(cert),windows_side='right',no_edge_switch=False)
             try:
-                with patch.dict(sys.modules,{'Quartz':q}), patch.object(app.sys,'platform','darwin'), patch.object(app.getpass,'getpass',return_value='test-password-123456'):
+                with patch.dict(sys.modules,{'Quartz':q,'AppKit':kit}), patch.object(app.sys,'platform','darwin'), patch.object(app.getpass,'getpass',return_value='test-password-123456'):
                     if disconnect or failure == 'tap':
                         app.transmit(args)
                     else:
@@ -143,6 +166,8 @@ class SenderTests(unittest.TestCase):
                 server.join(3)
             self.assertFalse(server.is_alive())
             q.CGDisplayHideCursor.assert_called_once_with(1)
+            previous.activateWithOptions_.assert_called_once_with(2)
+            self.assertFalse(foreground.active)
             if failure in ('hide','detach'):
                 if failure == 'hide':
                     q.CGDisplayShowCursor.assert_not_called()
@@ -164,7 +189,7 @@ class SenderTests(unittest.TestCase):
             else:
                 self.assertTrue(450 < y < 480)
             kb.press.assert_not_called()
-            if not disconnect and failure is None:
+            if not disconnect and failure in (None,'activation'):
                 pointer.press.assert_called_once_with('left')
                 pointer.release.assert_called_once_with('left')
 

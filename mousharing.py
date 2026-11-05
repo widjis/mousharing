@@ -15,6 +15,7 @@ import time
 from screens import Screen, SIDES, OPPOSITE, fraction, windows_primary_screen, ReturnGate
 
 from input_transport import take_input
+from cursor_capture import MacCursorCapture
 
 PORT = 47831
 PROTOCOL_VERSION = 2
@@ -179,7 +180,8 @@ def transmit(args):
     events = queue.Queue(maxsize=2048)
     controls = queue.Queue(maxsize=64)
     state = {'remote':False, 'alive':True, 'switch_id':0, 'ratio':0.5,
-             'hidden':False, 'detached':False, 'armed_at':0.0}
+             'pending':False, 'capture_deadline':0.0, 'armed_at':0.0}
+    cursor=MacCursorCapture(Q)
     physical_keys, physical_buttons = set(),set()
     def enqueue(event):
         try:
@@ -195,13 +197,11 @@ def transmit(args):
         conn.close()
     def go_local(ratio=None):
         was_remote=state['remote']
-        state['remote']=False
-        if state['detached']:
-            Q.CGAssociateMouseAndMouseCursorPosition(True)
-            state['detached']=False
-        if state['hidden']:
-            Q.CGDisplayShowCursor(display)
-            state['hidden']=False
+        was_pending=state['pending']
+        state.update(remote=False,pending=False)
+        cursor.release(display)
+        if was_pending:
+            state['armed_at']=time.monotonic()+0.25
         if was_remote:
             ratio=state['ratio'] if ratio is None else fraction(ratio)
             Q.CGWarpMouseCursorPosition(screen.point(args.windows_side,ratio))
@@ -209,26 +209,27 @@ def transmit(args):
             enqueue({'type':'reset'})
             print('Control: Mac',flush=True)
     def go_remote(ratio):
-        if not state['alive'] or physical_keys or physical_buttons:
+        if not state['alive'] or state['pending'] or physical_keys or physical_buttons:
             return False
-        # Do not send input to Windows unless local cursor capture succeeded.
-        hidden = Q.CGDisplayHideCursor(display)
-        if hidden != 0:
-            print('Cannot hide Mac cursor (code {}). Staying on Mac.'.format(hidden),flush=True)
-            return False
-        state['hidden']=True
-        detached = Q.CGAssociateMouseAndMouseCursorPosition(False)
-        if detached != 0:
-            Q.CGDisplayShowCursor(display)
-            state['hidden']=False
-            print('Cannot capture Mac cursor (code {}). Staying on Mac.'.format(detached),flush=True)
-            return False
-        state['detached']=True
-        state.update(remote=True,ratio=fraction(ratio),switch_id=state['switch_id']+1)
+        state.update(pending=True,ratio=fraction(ratio),capture_deadline=time.monotonic()+1.5)
+        cursor.request()
+        return True
+    def complete_capture():
+        try:
+            acquired=cursor.acquire(display)
+        except OSError as exc:
+            print(str(exc)+'. Staying on Mac.',flush=True)
+            go_local()
+            return
+        if acquired is None:
+            if time.monotonic() >= state['capture_deadline']:
+                print('Mac foreground activation timed out. Staying on Mac.',flush=True)
+                go_local()
+            return
+        state.update(pending=False,remote=True,switch_id=state['switch_id']+1)
         enqueue({'type':'enter','side':args.windows_side,'ratio':state['ratio'],
                  'switch_id':state['switch_id']})
-        print('Control: Windows',flush=True)
-        return True
+        print('Control: Windows (Mac cursor captured)',flush=True)
     def monitor():
         try:
             for reply in incoming:
@@ -280,7 +281,7 @@ def transmit(args):
         code = int(Q.CGEventGetIntegerValueField(event,Q.kCGKeyboardEventKeycode)) if kind in (10,11,12) else -1
         if code in (100,53) and kind in (10,11):
             if kind == 10 and not Q.CGEventGetIntegerValueField(event,Q.kCGKeyboardEventAutorepeat):
-                if code == 53 or state['remote']:
+                if code == 53 or state['remote'] or state['pending']:
                     go_local()
                 else:
                     location=Q.CGEventGetLocation(event)
@@ -297,6 +298,8 @@ def transmit(args):
         if not state['alive']:
             go_local()
             return event
+        if state['pending']:
+            return suppress(event)
         if kind in (5,6,7,27):
             dx=Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaX)
             dy=Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaY)
@@ -337,6 +340,13 @@ def transmit(args):
     print('Connected. Move across the shared edge, or use F8. Escape returns to Mac.',flush=True)
     try:
         while state['alive']:
+            cursor.pump()
+            if state['pending']:
+                complete_capture()
+            if state['remote'] and not cursor.is_active():
+                print('Mac foreground capture lost; stopping remote session.',flush=True)
+                disconnect()
+                break
             if state['remote'] and not Q.CGEventTapIsEnabled(tap):
                 print('Input capture lost; stopping remote session.',flush=True)
                 disconnect()

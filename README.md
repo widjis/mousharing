@@ -2,7 +2,7 @@
 
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
-**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 18 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
+**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 19 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
 
 - **Tepi layar:** otomatis berpindah antara Mac dan Windows; keyboard mengikuti perangkat yang sedang dikontrol.
 - **F8 / Fn+F8:** alternatif untuk berpindah kontrol secara manual.
@@ -12,7 +12,8 @@ Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN
 - Heartbeat dua arah; tombol yang ditahan dilepas saat reset, disconnect, atau timeout receiver 5 detik. Mac kembali ke mode lokal ketika koneksi gagal atau respons heartbeat habis waktu.
 - Tidak merekam input atau menyimpan password pairing.
 - Clipboard belum disinkronkan; copy/paste tetap lokal pada tiap laptop.
-- Saat remote, gerakan fisik mouse dilepas dari kursor Mac dan event lokal ditekan. Jika hide/capture kursor gagal, kontrol tetap pada Mac. Jika event tap mati saat remote, sesi dihentikan dan kontrol dikembalikan ke Mac.
+- Untuk hide cursor, proses Mac menjadi aplikasi aksesori foreground tanpa jendela atau ikon Dock selama remote. Fokus aplikasi Mac sebelumnya dipulihkan saat kembali lokal. Input selama transisi ditahan sampai capture siap.
+- Saat remote, gerakan fisik mouse dilepas dari kursor Mac dan event lokal ditekan. Jika hide/capture kursor gagal, kontrol tetap pada Mac. Jika fokus foreground atau event tap hilang saat remote, sesi dihentikan dan kontrol dikembalikan ke Mac.
 
 ## Susunan dua layar
 
@@ -135,3 +136,5 @@ Source dan dependency dipisahkan dari identitas lokal: `.venv/`, `data/`, sertif
 Referensi implementasi: [Quartz event taps](https://developer.apple.com/documentation/coregraphics/quartz-event-services), [pynput](https://pynput.readthedocs.io/), [sertifikat X.509 PyCA](https://cryptography.io/en/latest/x509/tutorial/).
 
 API layar: [Windows GetSystemMetrics](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics), [DPI awareness](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setprocessdpiawarenesscontext).
+
+Hide cursor mengikuti batasan foreground pada [API Apple CGDisplayHideCursor](https://developer.apple.com/documentation/coregraphics/cgdisplayhidecursor(_:)). Perbaikan aktivasi foreground hanya memerlukan restart sender Mac; protokol dan receiver Windows tidak berubah.
