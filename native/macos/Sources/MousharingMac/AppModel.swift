@@ -24,6 +24,9 @@ import ApplicationServices
     private let input=InputEngine()
     private var clipboard:NativeClipboard?
     private var clipboardTimer:Timer?
+    private var captureRetry:DispatchWorkItem?
+    private var captureRecovery=0
+    private var captureRecovering=false
     init() {
         Self.active=self
         if let failure=AppSettings.staticLoadFailure { self.error=failure;status="Konfigurasi perlu diperbaiki";return }
@@ -31,9 +34,9 @@ import ApplicationServices
         refreshPermissions()
         service.onState={ [weak self] token,connected,text,clipboard in DispatchQueue.main.async { guard let self,self.service.operationID==token else { return };self.connectionState(connected,text,clipboard:clipboard) } }
         service.onPayload={ [weak self] token,payload in DispatchQueue.main.async { guard let self,self.service.operationID==token else { return };self.receive(payload) } }
-        service.onPeer={ [weak self] token,id in DispatchQueue.main.async { guard let self,self.service.operationID==token else { return }; if self.settings.role == .master { self.settings.trustedPeerID=id;self.saveSettings();if !self.error.isEmpty { self.stop() } } } }
+        service.onPeer={ [weak self] token,id in DispatchQueue.main.async { guard let self,self.service.operationID==token else { return }; if self.settings.role == .master { self.settings.trustedPeerID=id;self.saveSettings();if !self.error.isEmpty { self.stop("pairing_save_failed") } } } }
         input.send={ [weak self] payload in self?.service.send(payload) }
-        input.failure={ [weak self] message in self?.error=message;self?.stop() }
+        input.failure={ [weak self] message in self?.recoverCapture(message) }
         input.localState={ [weak self] remote in guard let self else { return }; if self.connected { self.status=remote ? "Mengontrol \(self.peerName)":"Kontrol pada master" } }
         discovery.onFound={ [weak self] device in DispatchQueue.main.async { guard let self else { return }; self.discovered.removeAll { $0.id==device.id || Date().timeIntervalSince($0.lastSeen)>8 }; self.discovered.append(device) } }
         discovery.start(identity:settings,advertise:false)
@@ -80,9 +83,44 @@ import ApplicationServices
     }
     private func connectionState(_ value:Bool,_ text:String,clipboard allowed:Bool) {
         guard running else { return }
-        if value { connected=true;peerName=text;status="Terhubung ke \(text)";do { try input.start(role:settings.role,side:settings.side);if allowed && settings.clipboardEnabled { clipboardActive=true;clipboard=NativeClipboard(origin:settings.deviceID);let timer=Timer(timeInterval:0.25,repeats:true) { [weak self] _ in Task { @MainActor in guard let self,self.connected,let update=self.clipboard?.poll() else { return };self.service.send(update) } };RunLoop.main.add(timer,forMode:.common);clipboardTimer=timer } } catch { self.error=error.localizedDescription;stop() } }
+        NativeLog.event(value ? "session_connected":"session_disconnected", value ? "":text)
+        cancelCaptureRecovery()
+        if value {
+            connected=true;peerName=text;status="Terhubung ke \(text)"
+            do { try input.start(role:settings.role,side:settings.side) } catch { recoverCapture(error.localizedDescription) }
+            if allowed && settings.clipboardEnabled {
+                clipboardActive=true;clipboard=NativeClipboard(origin:settings.deviceID)
+                let timer=Timer(timeInterval:0.25,repeats:true) { [weak self] _ in Task { @MainActor in guard let self,self.connected,let update=self.clipboard?.poll() else { return };self.service.send(update) } }
+                RunLoop.main.add(timer,forMode:.common);clipboardTimer=timer
+            }
+        }
         else { connected=false;clipboardActive=false;clipboardTimer?.invalidate();clipboardTimer=nil;clipboard=nil;input.stop();status=text;if text.hasPrefix("Tidak dapat membuka port") { running=false;service.stop();discovery.stop();error=text } }
     }
-    private func receive(_ payload:[String:Any]) { guard connected else { return };do { if payload["type"] as? String == "clipboard" { if settings.clipboardEnabled { try clipboard?.apply(payload) } } else { try input.receive(payload) } } catch { self.error=error.localizedDescription;stop() } }
-    func stop() { running=false;connected=false;clipboardActive=false;clipboardTimer?.invalidate();clipboardTimer=nil;clipboard=nil;input.stop();service.stop();discovery.stop();status="Sharing dijeda" }
+    private func receive(_ payload:[String:Any]) { guard connected else { return };do { if payload["type"] as? String == "clipboard" { if settings.clipboardEnabled { try clipboard?.apply(payload) } } else if !captureRecovering { try input.receive(payload) } } catch { self.error=error.localizedDescription;stop("payload_rejected") } }
+    private func cancelCaptureRecovery() { captureRecovery+=1;captureRetry?.cancel();captureRetry=nil;captureRecovering=false }
+    private func recoverCapture(_ reason:String) {
+        guard running,connected else { return }
+        NativeLog.event("capture_recovery",reason)
+        cancelCaptureRecovery();input.stop();captureRecovering=true
+        let generation=captureRecovery
+        func retry(_ attempt:Int) {
+            guard self.running,self.connected,self.captureRecovery==generation else { return }
+            let delay=[1.0,2,4,8,15][min(attempt,4)]
+            self.status="Memulihkan kontrol otomatis dalam \(Int(delay)) detik…"
+            self.error=reason
+            let work=DispatchWorkItem { [weak self] in
+                guard let self,self.running,self.connected,self.captureRecovery==generation else { return }
+                self.refreshPermissions()
+                do {
+                    guard self.accessibility,self.settings.role != .master || self.inputMonitoring else { throw NativeError.message("Izin input belum aktif. Aktifkan kembali izin Mousharing.") }
+                    try self.input.start(role:self.settings.role,side:self.settings.side)
+                    self.captureRecovering=false;self.captureRetry=nil;self.error="";self.status="Terhubung ke \(self.peerName)";NativeLog.event("capture_recovered")
+                } catch { NativeLog.event("capture_retry_failed");retry(attempt+1) }
+            }
+            self.captureRetry=work;DispatchQueue.main.asyncAfter(deadline:.now()+delay,execute:work)
+        }
+        retry(0)
+    }
+    func stop() { stop("requested_stop") }
+    private func stop(_ cause:String) { NativeLog.event(cause);cancelCaptureRecovery();running=false;connected=false;clipboardActive=false;clipboardTimer?.invalidate();clipboardTimer=nil;clipboard=nil;input.stop();service.stop();discovery.stop();status="Sharing dijeda" }
 }
