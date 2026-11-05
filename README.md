@@ -2,14 +2,40 @@
 
 Satu mouse dan keyboard bawaan Mac untuk mengontrol Mac atau Windows melalui LAN.
 
-**Status:** prototipe CLI. Dependency Mac sudah dipasang dan bisa diimpor; tes protokol/TLS lokal tersedia. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
+**Status:** prototipe CLI dengan perpindahan otomatis melalui tepi layar. Dependency Mac sudah dipasang dan bisa diimpor; 13 tes protokol, geometri, dan simulasi perpindahan lulus. Input fisik lintas Mac–Windows belum diuji. Belum ada GUI atau installer.
 
-- **F8 / Fn+F8:** berpindah antara Mac dan Windows.
+- **Tepi layar:** otomatis berpindah antara Mac dan Windows; keyboard mengikuti perangkat yang sedang dikontrol.
+- **F8 / Fn+F8:** alternatif untuk berpindah kontrol secara manual.
 - **Escape:** kembali ke Mac. Escape saat ini dicadangkan, tidak diteruskan ke Windows.
 - Mouse relatif, klik kiri/kanan/tengah, scroll, tombol ANSI US, modifier, F1–F12 kecuali F8.
 - TLS dengan sertifikat Windows yang disalin secara eksplisit ke Mac dan password pairing minimal 16 karakter.
 - Heartbeat dua arah; tombol yang ditahan dilepas saat reset, disconnect, atau timeout receiver 5 detik. Mac kembali ke mode lokal ketika koneksi gagal atau respons heartbeat habis waktu.
 - Tidak merekam input atau menyimpan password pairing.
+
+## Susunan dua layar
+
+Masing-masing laptop menjalankan dan menampilkan desktopnya sendiri. Mouse terpasang di Mac, dan keyboard bawaan Mac mengikuti fokus kontrol.
+
+Default susunan **Mac | Windows**: gerakkan kursor ke tepi kanan Mac untuk masuk ke Windows. Gerakkan kursor ke tepi kiri Windows untuk kembali ke Mac. Kursor muncul pada posisi vertikal yang sebanding di layar tujuan; kursor Mac disembunyikan selama Windows dikontrol.
+
+Ukuran layar utama dibaca otomatis pada saat mulai. Posisi fisik Windows dipilih melalui argumen kedua launcher:
+
+```sh
+./start-mac.command IP_WINDOWS right  # Windows di kanan Mac (default)
+./start-mac.command IP_WINDOWS left   # Windows di kiri Mac
+./start-mac.command IP_WINDOWS top    # Windows di atas Mac
+./start-mac.command IP_WINDOWS bottom # Windows di bawah Mac
+```
+
+Perpindahan otomatis ditunda selama tombol atau klik masih ditahan, sehingga drag tetap berada pada perangkat asal. Setelah kembali ke Mac ada jeda singkat dan posisi masuk diberi jarak dari tepi untuk mencegah perpindahan bolak-balik tanpa sengaja. Escape tetap menjadi jalan kembali ke Mac.
+
+Saat ini satu layar utama per laptop. Setelah mengubah resolusi, scaling, atau layar utama, mulai ulang kedua program. Untuk mematikan perpindahan otomatis:
+
+```sh
+.venv/bin/python mousharing.py send --host IP_WINDOWS --cert data/windows-cert.pem --no-edge-switch
+```
+
+**Pembaruan dari prototipe pertama:** hentikan program lalu jalankan `git pull --ff-only` di Mac dan Windows (atau unduh ulang ZIP). Kedua perangkat perlu source terbaru karena protokol sudah versi 2. Dependency tidak berubah; sertifikat yang sudah ada tetap digunakan.
 
 ## 1. Setup Windows
 
@@ -75,7 +101,7 @@ Ganti `IP_WINDOWS` dengan IP LAN Windows. Launcher juga bisa diklik dua kali; al
 
 Izinkan terminal/Python yang dipakai di **System Settings → Privacy & Security → Accessibility** dan **Input Monitoring**, lalu tutup dan buka ulang terminal/program bila diminta macOS. Izin diperiksa melalui sistem; skrip tidak mengubahnya secara otomatis.
 
-Mulai dalam mode lokal. Tekan **F8/Fn+F8** untuk mengontrol Windows, **Escape** untuk kembali ke Mac. Ctrl+C menghentikan sender saat mode lokal.
+Mulai dalam mode lokal. Lewati tepi yang menghadap Windows untuk berpindah otomatis. **F8/Fn+F8** tetap tersedia; **Escape** selalu kembali ke Mac. Ctrl+C menghentikan sender saat mode lokal.
 
 ## Verifikasi pengembangan
 
@@ -84,21 +110,24 @@ Mulai dalam mode lokal. Tekan **F8/Fn+F8** untuk mengontrol Windows, **Escape** 
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengetik atau menggerakkan mouse pengguna. Sertifikat tes dibuat sementara dengan generator yang sama dengan setup Windows. Tes mencakup framing pesan, pemetaan tombol shortcut, password salah, sertifikat tidak dipercaya, heartbeat, reset, dan pelepasan tombol saat disconnect. Skrip PowerShell telah diperiksa sintaksnya dari Mac; eksekusi Windows belum dilakukan.
+Tes memakai socket lokal TLS dan controller input tiruan, sehingga tidak mengetik atau menggerakkan mouse pengguna. Sertifikat tes dibuat sementara dengan generator yang sama dengan setup Windows. Tes mencakup framing pesan, pemetaan tombol shortcut, password salah, sertifikat tidak dipercaya, heartbeat, reset, pelepasan tombol saat disconnect, empat susunan layar, dan resolusi berbeda. Simulasi event loop sender melalui TLS menguji perpindahan Mac → Windows → Mac serta hide/show dan pemulihan posisi kursor tanpa memakai input fisik. Skrip PowerShell telah diperiksa sintaksnya dari Mac; eksekusi Windows belum dilakukan.
 
 ## Uji dua laptop yang masih diperlukan
 
 1. Jalankan receiver dan sender; mode lokal hanya memengaruhi Mac.
-2. Tekan F8; uji gerakan mouse terus-menerus, drag, klik, dan scroll.
-3. Uji pengetikan, Shift, Ctrl+C/V di aplikasi Windows biasa. Command dipetakan ke tombol Windows; Control tetap Ctrl.
-4. Tekan Escape; pastikan kembali lokal dan tidak ada tombol Windows tertahan.
-5. Putus koneksi saat menahan tombol; pastikan input lokal kembali dan tombol Windows dilepas setelah timeout.
-6. Uji sleep/wake dan penghentian proses. Koneksi ulang masih manual.
+2. Lewati tepi kanan Mac (default), lalu tepi kiri Windows: pastikan kontrol dan keyboard berpindah dua arah. Uji F8 sebagai alternatif.
+3. Uji posisi vertikal pada bagian atas/tengah/bawah layar, gerakan terus-menerus, klik, scroll, dan drag tanpa berpindah saat tombol ditahan.
+4. Uji pengetikan, Shift, Ctrl+C/V di aplikasi Windows biasa. Command dipetakan ke tombol Windows; Control tetap Ctrl.
+5. Tekan Escape; pastikan kembali lokal dan tidak ada tombol Windows tertahan.
+6. Putus koneksi saat menahan tombol; pastikan input lokal kembali dan tombol Windows dilepas setelah timeout.
+7. Uji sleep/wake dan penghentian proses. Koneksi ulang masih manual.
 
 ## Batas saat ini
 
-Belum ada GUI, installer, auto-discovery, clipboard, perpindahan tepi layar, Windows → Mac, atau autostart. Pemetaan mengikuti posisi ANSI US; layout lain, IME, Fn, media keys, dan kombinasi modifier kiri/kanan bersamaan belum divalidasi. Sinkronisasi Caps Lock antarperangkat belum tersedia. Secure Input macOS dapat membatasi capture. Aplikasi Windows elevated/UAC dan lock screen bukan target prototipe ini.
+Belum ada GUI, installer, auto-discovery, clipboard, dukungan monitor tambahan, atau autostart. Perangkat sumber input saat ini tetap Mac; Windows menerima input dan dapat mengembalikan kontrol saat kursor melewati tepi bersama. Pemetaan mengikuti posisi ANSI US; layout lain, IME, Fn, media keys, scaling lintas perangkat secara fisik, dan kombinasi modifier kiri/kanan bersamaan belum divalidasi. Sinkronisasi Caps Lock antarperangkat belum tersedia. Secure Input macOS dapat membatasi capture. Aplikasi Windows elevated/UAC dan lock screen bukan target prototipe ini.
 
 Source dan dependency dipisahkan dari identitas lokal: `.venv/`, `data/`, sertifikat, dan private key diabaikan Git. Simpan backup identitas Windows secara privat jika diperlukan; setup tidak merotasi sertifikat secara otomatis.
 
 Referensi implementasi: [Quartz event taps](https://developer.apple.com/documentation/coregraphics/quartz-event-services), [pynput](https://pynput.readthedocs.io/), [sertifikat X.509 PyCA](https://cryptography.io/en/latest/x509/tutorial/).
+
+API layar: [Windows GetSystemMetrics](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics), [DPI awareness](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setprocessdpiawarenesscontext).

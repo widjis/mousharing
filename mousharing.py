@@ -12,8 +12,10 @@ import sys
 import threading
 import time
 
+from screens import Screen, SIDES, OPPOSITE, fraction, windows_primary_screen
+
 PORT = 47831
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 # Use physical Windows virtual keys so Ctrl+C/V works as keyboard shortcuts.
 WINDOWS_VK = {c: ord(c.upper()) for c in 'abcdefghijklmnopqrstuvwxyz0123456789'}
 WINDOWS_VK.update({';':0xBA, '=':0xBB, ',':0xBC, '-':0xBD, '.':0xBE,
@@ -46,6 +48,7 @@ def messages(sock):
 def receive(args):
     if sys.platform != 'win32':
         raise SystemExit('Receiver runs on Windows.')
+    screen = windows_primary_screen()
     from pynput import keyboard, mouse
     kb, pointer = keyboard.Controller(), mouse.Controller()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -58,12 +61,21 @@ def receive(args):
         print('Waiting for Mac. Ctrl+C stops receiver.', flush=True)
         while True:
             raw, address = server.accept()
-            handle_connection(raw, context, token, kb, pointer, keyboard, mouse)
+            handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen)
 
 
-def handle_connection(raw, context, token, kb, pointer, keyboard, mouse):
+def handle_connection(raw, context, token, kb, pointer, keyboard, mouse, screen):
     """One authenticated session; always release pressed inputs on exit."""
     held_keys, held_buttons = set(), set()
+    active = False
+    side, switch_id = 'right', 0
+    def release_inputs():
+        for key in list(held_keys):
+            kb.release(key)
+            held_keys.discard(key)
+        for button in list(held_buttons):
+            pointer.release(button)
+            held_buttons.discard(button)
     try:
         raw.settimeout(5)
         with context.wrap_socket(raw, server_side=True) as conn:
@@ -72,7 +84,7 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse):
             if (hello.get('version') != PROTOCOL_VERSION or
                     not secrets.compare_digest(str(hello.get('token','')).encode('utf-8'), token.encode('utf-8'))):
                 raise ValueError('Pairing rejected')
-            send(conn, {'ready': True})
+            send(conn, {'ready': True, 'screen':{'width':screen.width,'height':screen.height}})
             print('Mac connected.', flush=True)
             for event in events:
                 kind = event.get('type')
@@ -80,14 +92,30 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse):
                     send(conn, {'type':'pong'})
                     continue
                 if kind == 'reset':
-                    for key in list(held_keys):
-                        kb.release(key)
-                        held_keys.discard(key)
-                    for button in list(held_buttons):
-                        pointer.release(button)
-                        held_buttons.discard(button)
+                    release_inputs()
+                    active = False
+                elif kind == 'enter':
+                    release_inputs()
+                    side = event['side']
+                    if side not in SIDES:
+                        raise ValueError('Invalid screen side')
+                    switch_id = int(event['switch_id'])
+                    pointer.position = tuple(round(v) for v in screen.point(OPPOSITE[side],event['ratio']))
+                    active = True
+                elif not active:
+                    # Ignore input already queued when this receiver returned control to Mac.
+                    continue
                 elif kind == 'move':
-                    pointer.move(max(-2000,min(2000,int(event['dx']))), max(-2000,min(2000,int(event['dy']))))
+                    dx=max(-2000,min(2000,int(event['dx'])))
+                    dy=max(-2000,min(2000,int(event['dy'])))
+                    x,y=pointer.position
+                    x,y=screen.clamp(x+dx,y+dy)
+                    pointer.position=(round(x),round(y))
+                    if event.get('edge_switch') and not held_keys and not held_buttons and screen.crossed(OPPOSITE[side],x,y,dx,dy):
+                        active=False
+                        release_inputs()
+                        send(conn, {'type':'leave','switch_id':switch_id,
+                                    'ratio':screen.ratio(OPPOSITE[side],x,y)})
                 elif kind == 'scroll':
                     pointer.scroll(max(-100,min(100,int(event['dx']))), max(-100,min(100,int(event['dy']))))
                 elif kind == 'button':
@@ -113,52 +141,84 @@ def handle_connection(raw, context, token, kb, pointer, keyboard, mouse):
         print('Connection ended:', type(exc).__name__, flush=True)
     finally:
         raw.close()
-        for key in held_keys:
-            kb.release(key)
-        for button in held_buttons:
-            pointer.release(button)
+        release_inputs()
 
 
 def transmit(args):
     if sys.platform != 'darwin':
         raise SystemExit('Sender runs on macOS.')
     import Quartz as Q
+    display=Q.CGMainDisplayID()
+    bounds=Q.CGDisplayBounds(display)
+    try:
+        screen=Screen(bounds.origin.x,bounds.origin.y,bounds.size.width,bounds.size.height)
+    except ValueError:
+        raise SystemExit('No Mac primary display. Run from Terminal in your logged-in desktop session.')
     token = getpass.getpass('Pairing password: ')
     context = ssl.create_default_context(cafile=args.cert)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    # Trust is bound to the supplied self-signed certificate, not the LAN address.
+    # Trust is bound to the supplied certificate, not the LAN address.
     context.check_hostname = False
     conn = context.wrap_socket(socket.create_connection((args.host,args.port),timeout=5), server_hostname=args.host)
     send(conn, {'token':token, 'version':PROTOCOL_VERSION})
     incoming = messages(conn)
-    if next(incoming).get('ready') is not True:
+    ready=next(incoming)
+    if ready.get('ready') is not True:
         raise SystemExit('Receiver rejected connection')
+    peer=ready['screen']
+    Screen(0,0,float(peer['width']),float(peer['height']))
+    print('Windows primary screen: {} x {}; Windows is {} of Mac.'.format(peer['width'],peer['height'],args.windows_side),flush=True)
     events = queue.Queue(maxsize=2048)
-    state = {'remote':False, 'alive':True}
+    controls = queue.Queue(maxsize=64)
+    state = {'remote':False, 'alive':True, 'switch_id':0, 'ratio':0.5,
+             'hidden':False, 'armed_at':0.0}
+    physical_keys, physical_buttons = set(),set()
     def enqueue(event):
         try:
             events.put_nowait(event)
         except queue.Full:
-            state.update(remote=False,alive=False)
+            state['alive']=False
     def disconnect():
-        state.update(remote=False,alive=False)
+        state['alive']=False
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
         conn.close()
-
+    def go_local(ratio=None):
+        was_remote=state['remote']
+        state['remote']=False
+        if state['hidden']:
+            Q.CGDisplayShowCursor(display)
+            state['hidden']=False
+        if was_remote:
+            ratio=state['ratio'] if ratio is None else fraction(ratio)
+            Q.CGWarpMouseCursorPosition(screen.point(args.windows_side,ratio))
+            state['armed_at']=time.monotonic()+0.25
+            enqueue({'type':'reset'})
+            print('Control: Mac',flush=True)
+    def go_remote(ratio):
+        if not state['alive'] or physical_keys or physical_buttons:
+            return False
+        state.update(remote=True,ratio=fraction(ratio),switch_id=state['switch_id']+1)
+        enqueue({'type':'enter','side':args.windows_side,'ratio':state['ratio'],
+                 'switch_id':state['switch_id']})
+        if not state['hidden']:
+            state['hidden']=Q.CGDisplayHideCursor(display)==0
+        print('Control: Windows',flush=True)
+        return True
     def monitor():
         try:
             for reply in incoming:
-                if reply.get('type') != 'pong':
+                if reply.get('type') == 'leave':
+                    controls.put_nowait(reply)
+                elif reply.get('type') != 'pong':
                     raise ValueError('Unexpected receiver response')
-        except (OSError, ValueError):
+        except (OSError, ValueError, queue.Full):
             pass
         finally:
             incoming.close()
             disconnect()
-
     def worker():
         try:
             last_ping = time.monotonic()
@@ -175,23 +235,50 @@ def transmit(args):
             pass
         finally:
             disconnect()
-            print('Disconnected; Mac input restored.',flush=True)
+            print('Disconnected; returning control to Mac.',flush=True)
     threading.Thread(target=worker,daemon=True).start()
     threading.Thread(target=monitor,daemon=True).start()
     modifiers = {54:Q.kCGEventFlagMaskCommand,55:Q.kCGEventFlagMaskCommand,56:Q.kCGEventFlagMaskShift,60:Q.kCGEventFlagMaskShift,58:Q.kCGEventFlagMaskAlternate,61:Q.kCGEventFlagMaskAlternate,59:Q.kCGEventFlagMaskControl,62:Q.kCGEventFlagMaskControl,57:Q.kCGEventFlagMaskAlphaShift}
+    modifier_mask=(Q.kCGEventFlagMaskCommand | Q.kCGEventFlagMaskShift |
+                   Q.kCGEventFlagMaskAlternate | Q.kCGEventFlagMaskControl)
     def callback(proxy,kind,event,ref):
         if kind in (Q.kCGEventTapDisabledByTimeout,Q.kCGEventTapDisabledByUserInput):
-            state['remote']=False
+            go_local()
             enqueue({'type':'reset'})
             Q.CGEventTapEnable(tap,True)
             return event
         code = int(Q.CGEventGetIntegerValueField(event,Q.kCGKeyboardEventKeycode)) if kind in (10,11,12) else -1
-        # F8 is a dedicated toggle; Escape always returns locally and is reserved.
         if code in (100,53) and kind in (10,11):
             if kind == 10 and not Q.CGEventGetIntegerValueField(event,Q.kCGKeyboardEventAutorepeat):
-                state['remote'] = (not state['remote'] and state['alive']) if code == 100 else False
-                enqueue({'type':'reset'})
-                print('Control: '+('Windows' if state['remote'] else 'Mac'),flush=True)
+                if code == 53 or state['remote']:
+                    go_local()
+                else:
+                    location=Q.CGEventGetLocation(event)
+                    go_remote(screen.ratio(args.windows_side,location.x,location.y))
+            return None
+        if kind == 10:
+            physical_keys.add(code)
+        elif kind == 11:
+            physical_keys.discard(code)
+        if kind in (1,3,25):
+            physical_buttons.add(kind)
+        elif kind in (2,4,26):
+            physical_buttons.discard(kind-1)
+        if not state['alive']:
+            go_local()
+            return event
+        if kind in (5,6,7,27):
+            dx=Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaX)
+            dy=Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaY)
+            if not state['remote']:
+                location=Q.CGEventGetLocation(event)
+                if (not args.no_edge_switch and time.monotonic() >= state['armed_at'] and
+                        not Q.CGEventGetFlags(event) & modifier_mask and
+                        screen.crossed(args.windows_side,location.x,location.y,dx,dy)):
+                    if go_remote(screen.ratio(args.windows_side,location.x,location.y)):
+                        return None
+                return event
+            enqueue({'type':'move','dx':dx,'dy':dy,'edge_switch':not args.no_edge_switch})
             return None
         if not state['remote']:
             return event
@@ -203,8 +290,6 @@ def transmit(args):
             elif name:
                 down = kind == 10 if kind != 12 else bool(Q.CGEventGetFlags(event) & modifiers.get(code,0))
                 enqueue({'type':'key','name':name,'down':down})
-        elif kind in (5,6,7,27):
-            enqueue({'type':'move','dx':Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaX),'dy':Q.CGEventGetIntegerValueField(event,Q.kCGMouseEventDeltaY)})
         elif kind in (1,2,3,4,25,26):
             name = 'left' if kind in (1,2) else 'right' if kind in (3,4) else 'middle'
             enqueue({'type':'button','name':name,'down':kind in (1,3,25)})
@@ -219,11 +304,19 @@ def transmit(args):
     source = Q.CFMachPortCreateRunLoopSource(None,tap,0)
     Q.CFRunLoopAddSource(Q.CFRunLoopGetCurrent(),source,Q.kCFRunLoopCommonModes)
     Q.CGEventTapEnable(tap,True)
-    print('Connected. F8 toggles Mac/Windows. Escape returns to Mac. Ctrl+C exits in local mode.',flush=True)
+    print('Connected. Move across the shared edge, or use F8. Escape returns to Mac.',flush=True)
     try:
         while state['alive']:
-            Q.CFRunLoopRunInMode(Q.kCFRunLoopDefaultMode,0.1,False)
+            while True:
+                try:
+                    reply=controls.get_nowait()
+                except queue.Empty:
+                    break
+                if state['remote'] and reply.get('switch_id') == state['switch_id']:
+                    go_local(reply['ratio'])
+            Q.CFRunLoopRunInMode(Q.kCFRunLoopDefaultMode,0.02,False)
     finally:
+        go_local()
         Q.CGEventTapEnable(tap,False)
         disconnect()
 
@@ -238,6 +331,8 @@ def main():
     receiver.add_argument('--key',required=True)
     sender = sub.add_parser('send')
     sender.add_argument('--host',required=True)
+    sender.add_argument('--windows-side',choices=SIDES,default='right',help='Windows position relative to Mac (default: right)')
+    sender.add_argument('--no-edge-switch',action='store_true',help='Switch only with F8/Escape')
     for command in (receiver,sender):
         command.add_argument('--cert',required=True)
         command.add_argument('--port',type=int,default=PORT)

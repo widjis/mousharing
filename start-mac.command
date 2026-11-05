@@ -17,4 +17,5 @@ if [ -z "$windows_host" ]; then
     echo 'Windows LAN IP is required.'
     exit 1
 fi
-exec .venv/bin/python mousharing.py send --host "$windows_host" --cert data/windows-cert.pem
+windows_side="${2:-right}"
+exec .venv/bin/python mousharing.py send --host "$windows_host" --cert data/windows-cert.pem --windows-side "$windows_side"
