@@ -1,0 +1,75 @@
+{
+  "warning": "PUBLIC TEST SECRETS ONLY. Never pair live devices using these values.",
+  "version": 1,
+  "keyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "keyBase64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "challengeBase64": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "clientNonceBase64": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+  "saltHex": "ae02e99bbdd3713ac87427589a48fc45818ef9a7ecd27941142d8f6f61afb7c1",
+  "c2sKeyHex": "263624c136c58de15b33d3910894232e34b4d4fac9ef04bfa54bd69f4309dddc",
+  "s2cKeyHex": "54dab9d313ac29775f7f4e58a556c271de65fab92aba0a5f88bb7f8a0f0b4899",
+  "invitePayload": {
+    "v": 1,
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Mac master",
+    "port": 47832,
+    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "addresses": [
+      "192.0.2.10"
+    ]
+  },
+  "invite": "MS1.eyJ2IjoxLCJpZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIm5hbWUiOiJNYWMgbWFzdGVyIiwicG9ydCI6NDc4MzIsImtleSI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDg9IiwiYWRkcmVzc2VzIjpbIjE5Mi4wLjIuMTAiXX0",
+  "challengePayload": {
+    "type": "challenge",
+    "v": 1,
+    "challenge": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Mac master"
+  },
+  "records": {
+    "hello": {
+      "aad": "mousharing-native-v1:hello",
+      "plaintext": "{\"type\":\"hello\",\"v\":1,\"challenge\":\"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=\",\"clientNonce\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=\",\"id\":\"22222222-2222-4222-8222-222222222222\",\"name\":\"Windows client\"}",
+      "plaintextBase64": "eyJ0eXBlIjoiaGVsbG8iLCJ2IjoxLCJjaGFsbGVuZ2UiOiJJQ0VpSXlRbEppY29LU29yTEMwdUx6QXhNak0wTlRZM09EazZPenc5UGo4PSIsImNsaWVudE5vbmNlIjoiUUVGQ1EwUkZSa2RJU1VwTFRFMU9UMUJSVWxOVVZWWlhXRmxhVzF4ZFhsOD0iLCJpZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsIm5hbWUiOiJXaW5kb3dzIGNsaWVudCJ9",
+      "envelope": {
+        "seq": 0,
+        "nonce": "AAECAwQFBgcICQoL",
+        "ciphertext": "PCCiYrWA4CGvKfLn3YZaQaGgpQ7BV30fUAaJ6XgHZ9cjKoy17IR70Q31E6fh5EdzvTYSwRnm1pZF1lJUcq7FoKRl9TWXuhAuZiOTPoW3M8oUqKoOHwY9HLOS8K8d0oOvmr0fpfVxmlzMd1r7GyBRM+4iU+S39GfIGJMZmNSwNFbsFGyn4+azN1CNcJwf9m6rUtbZFwcjoXi+bdpF1+Db3KG6qifbzeFGlVHv1+2ytImv/PgQuZlBjkfz4qkQqNLRKW7dk2O5ub5EdrCK0yS38MMD",
+        "tag": "VLF5SDVKWamGxhmMM1BuNA=="
+      }
+    },
+    "welcome": {
+      "aad": "mousharing-native-v1:welcome",
+      "plaintext": "{\"type\":\"welcome\",\"v\":1,\"challenge\":\"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=\",\"clientNonce\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=\",\"id\":\"11111111-1111-4111-8111-111111111111\",\"name\":\"Mac master\"}",
+      "plaintextBase64": "eyJ0eXBlIjoid2VsY29tZSIsInYiOjEsImNoYWxsZW5nZSI6IklDRWlJeVFsSmljb0tTb3JMQzB1THpBeE1qTTBOVFkzT0RrNk96dzlQajg9IiwiY2xpZW50Tm9uY2UiOiJRRUZDUTBSRlJrZElTVXBMVEUxT1QxQlJVbE5VVlZaWFdGbGFXMXhkWGw4PSIsImlkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwibmFtZSI6Ik1hYyBtYXN0ZXIifQ==",
+      "envelope": {
+        "seq": 0,
+        "nonce": "DA0ODxAREhMUFRYX",
+        "ciphertext": "49wdoQ8T3mkVXS258uRLgncvz5jURwqGucGSgYjMpZRLkkgfw4xlJHa6dwOC5nO54x3ovtu4V4M7swAdwqAg9StkFJLC/Zg6wzfNDHlcYLAHCuBlMrppU/hZgaRwx0C5j4GPrXt1C5Q7y3nOjdd3pRFjKHnEMHlFJ7KR9i2osnhlv7w7GyHbAGmxT8135HUIoeZ2Kqrz/3gIlT2uac7gYlNVas3mDQysweXiB6nE3eteSID4SI4I/nMQAdfhsYpF1ZF4jzN1YU6XIj2vRjp+Og==",
+        "tag": "BKvKFWC1VLZDXc/eeK8D2w=="
+      }
+    },
+    "c2sClipboard": {
+      "aad": "mousharing-native-v1:c2s:1",
+      "plaintext": "{\"type\":\"clipboard\",\"text\":\"Halo Mac → Windows 👋\\nbaris kedua\",\"clock\":1,\"origin\":\"22222222-2222-4222-8222-222222222222\"}",
+      "plaintextBase64": "eyJ0eXBlIjoiY2xpcGJvYXJkIiwidGV4dCI6IkhhbG8gTWFjIOKGkiBXaW5kb3dzIPCfkYtcbmJhcmlzIGtlZHVhIiwiY2xvY2siOjEsIm9yaWdpbiI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiJ9",
+      "envelope": {
+        "seq": 1,
+        "nonce": "AAECAwQFBgcICQoL",
+        "ciphertext": "DRB/oJt2q23evD+psKaxorR/IjwkLhTj2Tp0a2tOgRrvvtoGrKSyjFPHaQwmA9SP28U9a356cKobFnOiAyPOl7rnOSLpMcMFRK9zrwIhyk8jVRXb0KRFye8336Ti5RWeGjdScJubp+8xUWlE5p/mpzT+/IF/CjRUeioDeFgX",
+        "tag": "CC4cNXeOZEAXOTsMnE+WdQ=="
+      }
+    },
+    "s2cEnter": {
+      "aad": "mousharing-native-v1:s2c:1",
+      "plaintext": "{\"type\":\"enter\",\"side\":\"right\",\"ratio\":0.5,\"switchId\":7}",
+      "plaintextBase64": "eyJ0eXBlIjoiZW50ZXIiLCJzaWRlIjoicmlnaHQiLCJyYXRpbyI6MC41LCJzd2l0Y2hJZCI6N30=",
+      "envelope": {
+        "seq": 1,
+        "nonce": "AAECAwQFBgcICQoL",
+        "ciphertext": "2huO/gbHLAwxj0jzKPGxpxlcCi6xzM9NwSH4Ro6MeQ1WKDLcBNPERUNl9Mcsh1DbeEWf7yIMPu0=",
+        "tag": "TvMKxGPD7YW/vJ0Kpgoifg=="
+      }
+    }
+  }
+}

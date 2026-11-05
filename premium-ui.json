@@ -1,0 +1,15 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["native/macos/Sources", "native/windows/Mousharing.Windows"],
+  "locale": "id-ID",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Form", "Select/Listbox", "Scrollbar", "Toast"],
+  "ownership": {"Form":"native","Select/Listbox":"native","Scrollbar":"native","Toast":"native"},
+  "requiredCommands": ["macBuild", "protocolTests", "legacyTests"],
+  "commands": {
+    "macBuild": "swift build --package-path native/macos",
+    "protocolTests": ".venv/bin/python -m unittest discover -s native/shared -p 'test_*.py'",
+    "legacyTests": ".venv/bin/python -m unittest discover -s tests -v"
+  },
+  "evidence": {"nativeRuntime": "UX-CONTRACT.md"}
+}

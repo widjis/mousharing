@@ -7,3 +7,12 @@ __pycache__/
 *.pfx
 data/
 .DS_Store
+native/**/.build/
+native/**/bin/
+native/**/obj/
+native/**/dist/
+native/**/out/
+native/**/.vs/
+*.suo
+*.user
+premium-audit.json

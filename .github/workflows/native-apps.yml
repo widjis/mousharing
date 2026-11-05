@@ -1,0 +1,96 @@
+name: Native apps
+
+on:
+  push:
+    paths:
+      - 'native/**'
+      - '.github/workflows/native-apps.yml'
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.github/workflows/native-apps.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install protocol-test dependency
+        run: python -m pip install 'cryptography>=46,<47'
+      - name: Check deterministic fixtures
+        run: |
+          python native/shared/generate_fixtures.py
+          git diff --exit-code -- native/shared/fixtures.json
+      - name: Test handshake, crypto, framing, replay, and payload validation
+        run: python -m unittest discover -s native/shared -p 'test_*.py' -v
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      MOUSHARING_FIXTURES: ${{ github.workspace }}/native/shared/fixtures.json
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Test actual Swift CryptoKit implementation
+        run: swift test --package-path native/macos
+      - name: Build native application bundle
+        run: bash native/macos/build-app.sh
+      - name: Archive development build
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent native/macos/dist/Mousharing.app artifacts/Mousharing-macOS-development.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mousharing-macos-development-${{ runner.arch }}
+          path: artifacts/Mousharing-macOS-development.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Select installed .NET 10 SDK
+        shell: pwsh
+        run: dotnet new globaljson --sdk-version 10.0.100 --roll-forward latestFeature --force
+      - name: Install protocol-test dependency
+        run: python -m pip install 'cryptography>=46,<47'
+      - name: Build actual C# protocol checks
+        run: dotnet build native/shared/dotnet/Mousharing.ProtocolChecks.csproj -c Release
+      - name: Test C# vectors and cross-runtime TCP in both roles
+        run: python native/shared/cross_runtime.py
+      - name: Publish native WinUI application
+        shell: pwsh
+        run: |
+          dotnet publish native/windows/Mousharing.Windows/Mousharing.Windows.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -p:WindowsAppSDKSelfContained=true -o artifacts/windows-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mousharing-windows-x64-development
+          path: artifacts/windows-x64/
+          if-no-files-found: error
+          retention-days: 14
