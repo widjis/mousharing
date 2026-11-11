@@ -60,6 +60,14 @@ jobs:
         run: swift test --package-path native/macos
       - name: Build native application bundle
         run: bash native/macos/build-app.sh
+      - name: Package macOS installer
+        run: bash native/macos/package-installer.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mousharing-macos-installer-${{ runner.arch }}
+          path: native/macos/dist/installers/*
+          if-no-files-found: error
+          retention-days: 30
       - name: Archive development build
         run: |
           mkdir -p artifacts
@@ -131,6 +139,21 @@ jobs:
           path: artifacts/windows-x64/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Build Windows per-user installer
+        shell: pwsh
+        run: native/windows/package-installer.ps1 -PublishDirectory artifacts/windows-x64 -OutputDirectory artifacts/installers
+      - name: Test install, installed application startup and uninstall
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem artifacts/installers/*Setup.exe | Select-Object -First 1).FullName
+          native/windows/test-installer.ps1 -Installer $installer
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mousharing-windows-x64-installer
+          path: artifacts/installers/*
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Save startup diagnostics
         if: always()

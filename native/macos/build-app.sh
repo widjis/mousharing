@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 swift build -c release
-bundle="$PWD/dist/Mousharing.app"
+bundle="${MOUSHARING_APP_OUTPUT:-$PWD/dist/Mousharing.app}"
 mkdir -p "$bundle/Contents/MacOS"
 cp .build/release/MousharingMac "$bundle/Contents/MacOS/MousharingMac"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
